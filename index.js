@@ -92,6 +92,14 @@ async function onSpawn() {
   console.log('✅ Ông Tư đã vào vườn.')
   reconnectAttempts = 0
 
+  // Cho chunk quanh diem spawn tai xong truoc khi bat vat ly/pathfinder chu dong.
+  // Tren server hieu nang khong on dinh (vd Aternos free), neu bot bat dau mo phong
+  // vat ly ngay khi vua spawn ma chunk chua tai kip, server co the nhan duoc goi tin
+  // vi tri bat thuong va kick voi ly do "Invalid move player packet received".
+  await new Promise((resolve) => setTimeout(resolve, 2000))
+
+  if (!bot || !bot.entity) return // Neu da bi kick/ngat trong luc cho, dung lai o day
+
   const mcData = require('minecraft-data')(bot.version)
   const movements = new Movements(bot, mcData)
   // Han che pathfinder chi di chuyen trong khu vuon: kiem tra thu cong truoc moi lenh goto
