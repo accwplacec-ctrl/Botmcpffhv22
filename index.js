@@ -96,7 +96,7 @@ async function onSpawn() {
   // Tren server hieu nang khong on dinh (vd Aternos free), neu bot bat dau mo phong
   // vat ly ngay khi vua spawn ma chunk chua tai kip, server co the nhan duoc goi tin
   // vi tri bat thuong va kick voi ly do "Invalid move player packet received".
-  await new Promise((resolve) => setTimeout(resolve, 2000))
+  await new Promise((resolve) => setTimeout(resolve, 9000))
 
   if (!bot || !bot.entity) return // Neu da bi kick/ngat trong luc cho, dung lai o day
 
