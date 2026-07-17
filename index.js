@@ -34,6 +34,7 @@ let farmingTickHandle = null
 let affectionDecayHandle = null
 let workingMemorySweepHandle = null
 let brainCallInFlight = false
+let spawnStableTimer = null
 
 // ===== Tien ich chung =====
 
@@ -72,6 +73,14 @@ function connect() {
     checkTimeoutInterval: 60000,
   })
 
+  // ⛔ Tat vat ly ngay tu dau: mineflayer tu dong tick physics va gui packet
+  // vi tri len server ngay khi spawn, khong quan tam ham onSpawn co await hay
+  // khong. Tren server lag cao (Aternos free) chunk chua kip load ma physics
+  // da chay -> boi tu do -> packet vi tri nhay bat thuong -> server kick voi
+  // loi "Invalid move player packet received". Chi bat lai sau khi chac chan
+  // chunk da san sang (xem waitForChunkReady trong onSpawn).
+  bot.physicsEnabled = false
+
   bot.loadPlugin(pathfinder)
 
   registerEvents()
@@ -88,17 +97,41 @@ function registerEvents() {
   bot.on('end', onEnd)
 }
 
+function waitForChunkReady() {
+  return new Promise((resolve) => {
+    const check = () => {
+      if (!bot || !bot.entity) return resolve()
+      try {
+        const col = bot.world.getColumnAt(bot.entity.position)
+        if (col) return resolve()
+      } catch (e) {
+        // world chua san sang, thu lai
+      }
+      setTimeout(check, 200)
+    }
+    check()
+  })
+}
+
 async function onSpawn() {
   console.log('✅ Ông Tư đã vào vườn.')
-  reconnectAttempts = 0
 
-  // Cho chunk quanh diem spawn tai xong truoc khi bat vat ly/pathfinder chu dong.
-  // Tren server hieu nang khong on dinh (vd Aternos free), neu bot bat dau mo phong
-  // vat ly ngay khi vua spawn ma chunk chua tai kip, server co the nhan duoc goi tin
-  // vi tri bat thuong va kick voi ly do "Invalid move player packet received".
-  await new Promise((resolve) => setTimeout(resolve, 9000))
+  // Khong reset reconnectAttempts ngay lap tuc. Neu bot spawn xong roi bi kick
+  // gan nhu tuc thi (dung bug nay), reset som se lam vong lap reconnect luon
+  // quay ve delay thap nhat va spam lien tuc. Chi coi la "on dinh" neu bot
+  // tru duoc 30s khong bi kick.
+  if (spawnStableTimer) clearTimeout(spawnStableTimer)
+  spawnStableTimer = setTimeout(() => {
+    reconnectAttempts = 0
+  }, 30000)
+
+  // Cho chunk quanh diem spawn tai that su xong (khong doan mo bang setTimeout
+  // co dinh) truoc khi bat lai vat ly va pathfinder.
+  await waitForChunkReady()
 
   if (!bot || !bot.entity) return // Neu da bi kick/ngat trong luc cho, dung lai o day
+
+  bot.physicsEnabled = true // ✅ chi bat vat ly khi chac chan an toan
 
   const mcData = require('minecraft-data')(bot.version)
   const movements = new Movements(bot, mcData)
@@ -119,6 +152,10 @@ async function onSpawn() {
 
 function onEnd(reason) {
   console.log('🔌 Mất kết nối:', reason || '')
+  if (spawnStableTimer) {
+    clearTimeout(spawnStableTimer)
+    spawnStableTimer = null
+  }
   stopAllLoops()
   proactive.stop()
   moodEngine.stopEngine()
@@ -614,6 +651,7 @@ process.on('unhandledRejection', (reason) => console.log('🆘 unhandledRejectio
 process.on('SIGINT', () => {
   shuttingDown = true
   console.log('\n👋 Ông Tư nghỉ tay, đang tắt...')
+  if (spawnStableTimer) clearTimeout(spawnStableTimer)
   stopAllLoops()
   proactive.stop()
   moodEngine.stopEngine()
