@@ -1,69 +1,69 @@
 'use strict'
 
-const admin = require('firebase-admin')
-const fs = require('fs')
-const { CONFIG } = require('./config')
-
 /**
- * firebase.js
- * ------------------------------------------------------------
- * Khoi tao Firebase Admin SDK va cung cap cac ham doc/ghi:
- *  - Tri nho dai han (facts, affection, wheatSinceLastGift, total_wheat_gifted...)
- *  - URL relay (ngrok) moi nhat ma Colab tu ghi len, Railway doc realtime
+ * firebase.js — PHIEN BAN MOI: dung Firebase REST API + Database Secret
+ * KHONG dung firebase-admin / service account JSON nua.
+ * Ly do: private key RSA trong service account JSON bi bien doi khi paste
+ * qua mobile UI -> JWT signature sai -> "invalid_grant".
+ * Database Secret la 1 chuoi don gian, khong can JWT, khong bi loi nay.
  * ------------------------------------------------------------
  */
 
-let dbInitialized = false
-let db = null
+const https = require('https')
+const { CONFIG } = require('./config')
+
+const DB_URL = CONFIG.firebase.databaseURL.replace(/\/$/, '')
+const SECRET = process.env.FIREBASE_DATABASE_SECRET || ''
+
 let relayCache = { url: null, updatedAt: 0 }
 
-function loadServiceAccount() {
-  if (CONFIG.firebase.serviceAccountJson) {
-    try {
-      return JSON.parse(CONFIG.firebase.serviceAccountJson)
-    } catch (e) {
-      console.log('❌ Không parse được FIREBASE_SERVICE_ACCOUNT_JSON:', e.message)
-      return null
-    }
-  }
-  if (CONFIG.firebase.serviceAccountPath) {
-    try {
-      const raw = fs.readFileSync(CONFIG.firebase.serviceAccountPath, 'utf8')
-      return JSON.parse(raw)
-    } catch (e) {
-      console.log('❌ Không đọc được FIREBASE_SERVICE_ACCOUNT_PATH:', e.message)
-      return null
-    }
-  }
-  return null
+if (!SECRET) {
+  console.log('⚠️  FIREBASE_DATABASE_SECRET chưa được cấu hình — trí nhớ dài hạn sẽ không được lưu.')
 }
 
-function initFirebase() {
-  if (dbInitialized) return db
-  const serviceAccount = loadServiceAccount()
+// ===== REST helper =====
 
-  if (!serviceAccount || !CONFIG.firebase.databaseURL) {
-    console.log('⚠️ Firebase chưa được cấu hình đầy đủ — trí nhớ dài hạn sẽ KHÔNG được lưu.')
-    return null
-  }
+function restRequest(method, path, body) {
+  return new Promise((resolve, reject) => {
+    if (!SECRET || !DB_URL) {
+      return reject(new Error('Firebase chưa cấu hình (thiếu URL hoặc SECRET)'))
+    }
 
-  try {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-      databaseURL: CONFIG.firebase.databaseURL,
+    const url = new URL(`${DB_URL}/${path}.json?auth=${SECRET}`)
+    const bodyStr = body !== undefined ? JSON.stringify(body) : undefined
+    const options = {
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(bodyStr ? { 'Content-Length': Buffer.byteLength(bodyStr) } : {}),
+      },
+    }
+
+    const req = https.request(options, (res) => {
+      let data = ''
+      res.on('data', (chunk) => { data += chunk })
+      res.on('end', () => {
+        if (res.statusCode >= 400) {
+          return reject(new Error(`Firebase REST ${res.statusCode}: ${data}`))
+        }
+        try {
+          resolve(data ? JSON.parse(data) : null)
+        } catch (e) {
+          resolve(data)
+        }
+      })
     })
-    db = admin.database()
-    dbInitialized = true
-    console.log('🔥 Firebase Realtime DB đã kết nối.')
-  } catch (e) {
-    console.log('❌ Lỗi khởi tạo Firebase:', e.message)
-    db = null
-  }
 
-  return db
+    req.on('error', reject)
+    if (bodyStr) req.write(bodyStr)
+    req.end()
+  })
 }
 
-// ===== Mac dinh cho tri nho dai han khi chua ton tai =====
+// ===== Memory =====
+
 function defaultMemory() {
   return {
     affection: 50,
@@ -74,26 +74,20 @@ function defaultMemory() {
     facts: {},
     events: [],
     recent_conversations: [],
-    // Danh dau moc tron da nhac de tranh nhac lai
     milestones_announced: [],
-    // Danh dau da than ve lan chet gan nhat chua
     last_death_mentioned: true,
   }
 }
 
 async function loadMemory() {
-  const database = initFirebase()
-  if (!database) return defaultMemory()
-
+  if (!SECRET) return defaultMemory()
   try {
-    const snap = await database.ref(CONFIG.firebase.memoryPath).once('value')
-    const data = snap.val()
+    const data = await restRequest('GET', CONFIG.firebase.memoryPath)
     if (!data) {
       const fresh = defaultMemory()
       await saveMemory(fresh)
       return fresh
     }
-    // Merge voi default de dam bao khong thieu field neu schema cu hon
     return { ...defaultMemory(), ...data }
   } catch (e) {
     console.log('❌ Lỗi đọc trí nhớ từ Firebase:', e.message)
@@ -102,11 +96,9 @@ async function loadMemory() {
 }
 
 async function saveMemory(memoryObj) {
-  const database = initFirebase()
-  if (!database) return false
-
+  if (!SECRET) return false
   try {
-    await database.ref(CONFIG.firebase.memoryPath).set(memoryObj)
+    await restRequest('PUT', CONFIG.firebase.memoryPath, memoryObj)
     return true
   } catch (e) {
     console.log('❌ Lỗi ghi trí nhớ vào Firebase:', e.message)
@@ -114,8 +106,8 @@ async function saveMemory(memoryObj) {
   }
 }
 
-// ===== Doc URL relay (ngrok) moi nhat do Colab ghi =====
-// Cache 5s de tranh spam Firebase khi brain.js goi lien tuc.
+// ===== Relay URL (ngrok) =====
+
 async function getBrainEndpoint() {
   if (CONFIG.brain.endpointOverride) {
     return CONFIG.brain.endpointOverride.replace(/\/$/, '') + CONFIG.brain.endpointPath
@@ -126,16 +118,11 @@ async function getBrainEndpoint() {
     return relayCache.url
   }
 
-  const database = initFirebase()
-  if (!database) return null
-
+  if (!SECRET) return null
   try {
-    const snap = await database.ref(CONFIG.firebase.relayPath).once('value')
-    const data = snap.val()
-    // Cho phep Colab ghi { url: "..." } hoac chuoi thang
+    const data = await restRequest('GET', CONFIG.firebase.relayPath)
     const url = typeof data === 'string' ? data : data && data.url
     if (!url) return null
-
     relayCache = { url: url.replace(/\/$/, '') + CONFIG.brain.endpointPath, updatedAt: now }
     return relayCache.url
   } catch (e) {
@@ -144,18 +131,32 @@ async function getBrainEndpoint() {
   }
 }
 
-// Lang nghe realtime thay doi cua relay URL (goi 1 lan luc khoi dong, khong bat buoc dung)
+function initFirebase() {
+  if (!SECRET) {
+    console.log('⚠️  Firebase: chạy không có SECRET, bỏ qua.')
+    return null
+  }
+  console.log('🔥 Firebase REST API đã sẵn sàng (dùng Database Secret, không cần JWT).')
+  return true
+}
+
 function watchRelayUrl(onChange) {
-  const database = initFirebase()
-  if (!database) return
-  database.ref(CONFIG.firebase.relayPath).on('value', (snap) => {
-    const data = snap.val()
-    const url = typeof data === 'string' ? data : data && data.url
-    if (url) {
-      relayCache = { url: url.replace(/\/$/, '') + CONFIG.brain.endpointPath, updatedAt: Date.now() }
-      if (onChange) onChange(relayCache.url)
-    }
-  })
+  // REST API không hỗ trợ realtime listener như Admin SDK.
+  // Thay vao do, poll moi 10s neu can theo doi su thay doi URL.
+  if (!SECRET || !onChange) return
+  setInterval(async () => {
+    try {
+      const data = await restRequest('GET', CONFIG.firebase.relayPath)
+      const url = typeof data === 'string' ? data : data && data.url
+      if (url) {
+        const full = url.replace(/\/$/, '') + CONFIG.brain.endpointPath
+        if (full !== relayCache.url) {
+          relayCache = { url: full, updatedAt: Date.now() }
+          onChange(full)
+        }
+      }
+    } catch (e) { /* bo qua loi poll */ }
+  }, 10000)
 }
 
 module.exports = {
