@@ -115,9 +115,6 @@ const CONFIG = {
   // ===== Ket noi Firebase Realtime DB =====
   firebase: {
     databaseURL: process.env.FIREBASE_DATABASE_URL || '',
-    // JSON string cua service account, hoac duong dan file - xem firebase.js
-    serviceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '',
-    serviceAccountPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '',
     memoryPath: process.env.FIREBASE_MEMORY_PATH || 'ongtu/memory',
     relayPath: process.env.FIREBASE_RELAY_PATH || 'ongtu/relay',
   },
@@ -154,8 +151,8 @@ function validateConfig() {
   const warnings = []
   if (!CONFIG.ownerName) warnings.push('OWNER_NAME chua duoc cau hinh - bot se khong biet ai la chu.')
   if (!CONFIG.firebase.databaseURL) warnings.push('FIREBASE_DATABASE_URL chua duoc cau hinh.')
-  if (!CONFIG.firebase.serviceAccountJson && !CONFIG.firebase.serviceAccountPath) {
-    warnings.push('Chua co FIREBASE_SERVICE_ACCOUNT_JSON hoac FIREBASE_SERVICE_ACCOUNT_PATH.')
+  if (!process.env.FIREBASE_DATABASE_SECRET) {
+    warnings.push('Chua co FIREBASE_DATABASE_SECRET - firebase.js se khong ghi/doc duoc Firebase.')
   }
   if (!CONFIG.brain.token) warnings.push('BRAIN_TOKEN chua duoc cau hinh - goi Colab se khong xac thuc duoc.')
   return warnings
