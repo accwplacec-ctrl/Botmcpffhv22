@@ -180,7 +180,10 @@ function consumeDeathMention() {
   const m = getMemory()
   if (m.last_died_reason && !m.last_death_mentioned) {
     m.last_death_mentioned = true
-    scheduleSave()
+    // Ghi ngay lap tuc (khong debounce): day la co 1-lan-duy-nhat, neu bot
+    // crash/restart trong luc con dang cho debounce 3s thi co se bi mat va
+    // lan sau lai nhac lai y nhu chua tung tieu thu.
+    firebaseModule.saveMemory(m).catch((e) => console.log('❌ Lỗi lưu death mention:', e.message))
     return m.last_died_reason
   }
   return null
