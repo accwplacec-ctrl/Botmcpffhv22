@@ -37,6 +37,14 @@ const CONFIG = {
     .map((s) => s.trim())
     .filter(Boolean),
 
+  // Danh sach tu khoa kich hoat - bot CHI tra loi (ca chu lan nguoi la) khi tin nhan
+  // co goi ten/nickname bot, khong tra loi moi cau chat linh tinh khong lien quan.
+  // Dat trong .env: TRIGGER_WORDS=khoa,ka (mac dinh san 2 tu nay neu khong dat)
+  triggerWords: (process.env.TRIGGER_WORDS || 'khoa,ka')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+
   // ===== Vuon lua mi: bounding box 2 goc (x, z) + gioi han y =====
   // Dat toa do that trong .env. Vi du dat 1 goc (minX, minZ) va goc doi dien (maxX, maxZ).
   garden: {
