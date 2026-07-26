@@ -48,8 +48,11 @@ function say(message) {
 
 function getOwnerEntity() {
   if (!bot) return null
-  const p = bot.players && bot.players[CONFIG.ownerName]
-  return p && p.entity ? p.entity : null
+  for (const name of CONFIG.ownerNames) {
+    const p = bot.players && bot.players[name]
+    if (p && p.entity) return p.entity
+  }
+  return null
 }
 
 function countWheatInInventory() {
@@ -108,7 +111,8 @@ async function onSpawn() {
 
   proactive.start(bot, () => runBrainTurn('proactive', null))
 
-  say('Ông Tư đã vào vườn rồi đây Tới ơi.')
+  // Đã tắt lời chào tự động khi vào vườn — bỏ comment dòng dưới nếu muốn bật lại
+  // say(`Ông Tư đã vào vườn rồi đây Vân Thiên ơi.`)
 }
 
 function onEnd(reason) {
@@ -167,7 +171,7 @@ function onBlockUpdate(oldBlock, newBlock) {
     const distToOwner = owner.position.distanceTo(newBlock.position)
     if (distToOwner <= 5) {
       workingMemory.setFlag('ruong_bi_pha', 12 * 60 * 1000)
-      console.log('🌾 Ghi nhận: Tới vừa phá ruộng gần vị trí của mình.')
+      console.log('🌾 Ghi nhận: Vân Thiên vừa phá ruộng gần vị trí của mình.')
     }
   } catch (e) {
     console.log('❌ Lỗi xử lý blockUpdate:', e.message)
@@ -193,7 +197,7 @@ function onPlayerCollect(collector, collected) {
 
     const bonus = memory.bonusAffectionForGift(itemName)
     moodEngine.addHappyOnGiftReceived()
-    console.log(`🎁 Nhận được ${itemName} từ Tới, affection +${bonus}.`)
+    console.log(`🎁 Nhận được ${itemName} từ Vân Thiên, affection +${bonus}.`)
   } catch (e) {
     // bỏ qua lỗi heuristic, không quan trọng
   }
@@ -204,7 +208,7 @@ function onPlayerCollect(collector, collected) {
 async function onChat(username, message) {
   if (!bot || username === bot.username) return
   console.log(`💬 <${username}> ${message}`)
-  if (username !== CONFIG.ownerName) return
+  if (!CONFIG.ownerNames.includes(username)) return
 
   memory.pushConversation('owner', message)
   await runBrainTurn('chat', message)
@@ -234,9 +238,9 @@ async function runBrainTurn(mode, userMessage) {
       )
     }
     if (mode === 'proactive') {
-      promptParts.push('(Ông Tư đang chủ động bắt chuyện vì Tới đang ở trong vườn, Tới chưa nói gì cả.)')
+      promptParts.push('(Ông Tư đang chủ động bắt chuyện vì Vân Thiên đang ở trong vườn, Vân Thiên chưa nói gì cả.)')
     } else {
-      promptParts.push(`Tới vừa nói: "${userMessage}"`)
+      promptParts.push(`Vân Thiên vừa nói: "${userMessage}"`)
     }
     const userPrompt = promptParts.join('\n')
 
@@ -523,10 +527,10 @@ async function doDeliverGift() {
 
     await bot.toss(wheatItem.type, null, total)
     const milestone = memory.addWheatGifted(total)
-    say(`Ta để dành được ${total} bó lúa mì, mang ra đây tặng Tới đó.`)
+    say(`Ta để dành được ${total} bó lúa mì, mang ra đây tặng Vân Thiên đó.`)
 
     if (milestone) {
-      say(`Ấy chà, vậy là ta đã tặng Tới tròn ${milestone} bó lúa mì rồi đó, con nhớ giữ sức khoẻ mà làm ăn nghen.`)
+      say(`Ấy chà, vậy là ta đã tặng Vân Thiên tròn ${milestone} bó lúa mì rồi đó, con nhớ giữ sức khoẻ mà làm ăn nghen.`)
     }
   } catch (e) {
     console.log('❌ Lỗi khi tặng quà:', e.message)
