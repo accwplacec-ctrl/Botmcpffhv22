@@ -15,6 +15,15 @@ const brain = require('./brain')
 const garden = require('./garden')
 const proactive = require('./proactive')
 
+// HTTP server giả chỉ để giữ port mở cho Render (nếu deploy dạng Web Service).
+// Không ảnh hưởng gì tới logic bot, chỉ để Render không báo "No open ports".
+const http = require('http')
+http
+  .createServer((req, res) => res.end('Ông Tư đang làm việc trong vườn.'))
+  .listen(process.env.PORT || 3000, () => {
+    console.log(`🌐 HTTP giữ chỗ đang chạy ở port ${process.env.PORT || 3000} (chỉ để Render không cảnh báo port)`)
+  })
+
 /**
  * index.js
  * ------------------------------------------------------------
