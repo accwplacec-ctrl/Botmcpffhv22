@@ -3,7 +3,7 @@
 const { CONFIG } = require('./config')
 
 /**
- * persona.js
+ * persona.j
  * ------------------------------------------------------------
  * Ghep system prompt day du cho nhan vat "Ong Tu" - lao nong dan.
  * Gop: tinh cach co dinh + bang affection + mood override +
