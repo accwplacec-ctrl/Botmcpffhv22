@@ -30,8 +30,12 @@ const CONFIG = {
     username: process.env.MC_USERNAME || 'lamthanh',
   },
 
-  // Ten nguoi choi la chu cua bot (nguoi duy nhat bot tuong tac/lang nghe)
-  ownerName: process.env.OWNER_NAME || '',
+  // Danh sach nguoi choi la chu cua bot (bot lang nghe/tuong tac voi tat ca ten trong list nay)
+  // Dat trong .env: OWNER_NAMES=ten1,ten2
+  ownerNames: (process.env.OWNER_NAMES || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
 
   // ===== Vuon lua mi: bounding box 2 goc (x, z) + gioi han y =====
   // Dat toa do that trong .env. Vi du dat 1 goc (minX, minZ) va goc doi dien (maxX, maxZ).
@@ -115,6 +119,9 @@ const CONFIG = {
   // ===== Ket noi Firebase Realtime DB =====
   firebase: {
     databaseURL: process.env.FIREBASE_DATABASE_URL || '',
+    // JSON string cua service account, hoac duong dan file - xem firebase.js
+    serviceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '',
+    serviceAccountPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '',
     memoryPath: process.env.FIREBASE_MEMORY_PATH || 'ongtu/memory',
     relayPath: process.env.FIREBASE_RELAY_PATH || 'ongtu/relay',
   },
@@ -149,7 +156,9 @@ const CONFIG = {
 // Kiem tra nhanh cac cau hinh bat buoc, canh bao neu thieu (khong throw de tranh crash lien tuc)
 function validateConfig() {
   const warnings = []
-  if (!CONFIG.ownerName) warnings.push('OWNER_NAME chua duoc cau hinh - bot se khong biet ai la chu.')
+  if (!CONFIG.ownerNames || CONFIG.ownerNames.length === 0) {
+    warnings.push('OWNER_NAMES chua duoc cau hinh - bot se khong biet ai la chu.')
+  }
   if (!CONFIG.firebase.databaseURL) warnings.push('FIREBASE_DATABASE_URL chua duoc cau hinh.')
   if (!process.env.FIREBASE_DATABASE_SECRET) {
     warnings.push('Chua co FIREBASE_DATABASE_SECRET - firebase.js se khong ghi/doc duoc Firebase.')
