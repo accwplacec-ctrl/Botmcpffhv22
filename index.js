@@ -14,6 +14,7 @@ const persona = require('./persona')
 const brain = require('./brain')
 const garden = require('./garden')
 const proactive = require('./proactive')
+const chatLog = require('./chatLog')
 
 // HTTP server giả chỉ để giữ port mở cho Render (nếu deploy dạng Web Service).
 // Không ảnh hưởng gì tới logic bot, chỉ để Render không báo "No open ports".
@@ -214,18 +215,33 @@ function onPlayerCollect(collector, collected) {
 
 // ==================== SỰ KIỆN: CHAT ====================
 
+// Chỉ trả lời khi tin nhắn có gọi tên/nickname bot (vd "khoa", "ka") - áp dụng cho cả chủ lẫn người lạ
+function hasTriggerWord(message) {
+  const lower = (message || '').toLowerCase()
+  return CONFIG.triggerWords.some((w) => lower.includes(w))
+}
+
 async function onChat(username, message) {
   if (!bot || username === bot.username) return
   console.log(`💬 <${username}> ${message}`)
-  if (!CONFIG.ownerNames.includes(username)) return
 
-  memory.pushConversation('owner', message)
-  await runBrainTurn('chat', message)
+  const isOwner = CONFIG.ownerNames.includes(username)
+  chatLog.addMessage(username, message, isOwner) // general_chat ghi cho mọi người, boss_chat tự lọc chỉ owner
+
+  if (!hasTriggerWord(message)) return // không gọi tên bot thì chỉ ghi log, không trả lời
+
+  if (isOwner) {
+    memory.pushConversation('owner', message)
+    await runBrainTurn('chat', message)
+  } else {
+    // Người lạ cũng được trả lời, nhưng đi qua nhánh riêng (không đụng affection/facts của chủ)
+    await runBrainTurn('stranger_chat', message, username)
+  }
 }
 
 // ==================== GỌI BỘ NÃO VÀ THỰC THI KẾT QUẢ ====================
 
-async function runBrainTurn(mode, userMessage) {
+async function runBrainTurn(mode, userMessage, speakerUsername) {
   if (!bot) return
   if (brainCallInFlight) {
     console.log('⏭️ Đang có 1 lượt gọi bộ não khác chạy, bỏ qua lượt này.')
@@ -248,6 +264,11 @@ async function runBrainTurn(mode, userMessage) {
     }
     if (mode === 'proactive') {
       promptParts.push('(Ông Tư đang chủ động bắt chuyện vì Vân Thiên đang ở trong vườn, Vân Thiên chưa nói gì cả.)')
+    } else if (mode === 'stranger_chat') {
+      promptParts.push(
+        `(Có người lạ tên "${speakerUsername}" — không phải Vân Thiên — vừa nói chuyện với lão, không phải chủ vườn.)`
+      )
+      promptParts.push(`${speakerUsername} nói: "${userMessage}"`)
     } else {
       promptParts.push(`Vân Thiên vừa nói: "${userMessage}"`)
     }
@@ -266,6 +287,7 @@ async function runBrainTurn(mode, userMessage) {
       events: memorySummary.recent_events,
       recent_conversations: memorySummary.recent_conversations,
       working_memory_flags: workingFlags,
+      chat_log: chatLog.getRecentForPrompt(),
     }
 
     const response = await brain.generate(systemPrompt, userPrompt, emotionalState, memoryContext, wheatCount)
@@ -273,10 +295,14 @@ async function runBrainTurn(mode, userMessage) {
     if (response.say) {
       say(response.say)
       memory.pushConversation('ong_tu', response.say)
+      chatLog.addMessage('Ông Tư', response.say, false, 'bot')
     }
-    if (response.remember) memory.rememberFromBrain(response.remember)
-    if (response.affection_delta) memory.updateAffectionFromChat(response.affection_delta)
-    if (mode === 'chat' && response.affection_delta > 0) moodEngine.addHappyOnPositiveChat()
+    // Affection/facts chỉ áp dụng cho chủ — người lạ chat không ảnh hưởng tới hệ tình cảm của Vân Thiên
+    if (mode !== 'stranger_chat') {
+      if (response.remember) memory.rememberFromBrain(response.remember)
+      if (response.affection_delta) memory.updateAffectionFromChat(response.affection_delta)
+      if (mode === 'chat' && response.affection_delta > 0) moodEngine.addHappyOnPositiveChat()
+    }
 
     await executeAction(response.action)
   } catch (e) {
