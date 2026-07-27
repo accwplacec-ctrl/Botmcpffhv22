@@ -322,26 +322,12 @@ async function executeAction(action) {
         return doIdle()
       case 'wander':
         return doWander()
-      case 'till':
-        return doTill()
-      case 'plant':
-        return doPlant()
-      case 'harvest':
-        return doHarvest()
-      case 'sit':
-        return doSit()
-      case 'wave':
-        return doWave()
-      case 'look_owner':
-        return doLookOwner()
-      case 'deliver_gift':
-        return doDeliverGift()
+      case 'look':
+        return doLook()
+      case 'emote':
+        return doEmote()
       case 'rest':
         return doRest()
-      case 'avoid_owner':
-        return doAvoidOwner()
-      case 'avoid_monster':
-        return doAvoidMonster()
       default:
         console.log(`❓ Action không xác định: ${action}`)
         return doIdle()
@@ -411,6 +397,19 @@ function doLookOwner() {
     bot.lookAt(owner.position.offset(0, owner.height || 1.6, 0), true)
   } catch (e) {}
 }
+
+// "look" - Khoa nhìn về phía chủ (hoặc người gần nhất) nếu có, không thì thôi
+function doLook() {
+  return doLookOwner()
+}
+
+// "emote" - 1 cử chỉ ngắn (vung tay), thay cho "wave" cũ
+function doEmote() {
+  try {
+    bot.swingArm('right')
+  } catch (e) {}
+}
+
 
 async function doAvoidOwner() {
   const owner = getOwnerEntity()
@@ -574,43 +573,18 @@ async function doDeliverGift() {
 
 // ==================== VÒNG LẶP CANH TÁC TỰ ĐỘNG (không cần Colab) ====================
 
+// Chỉ đi lung tung trong khu vực đã nhốt (garden bounds) - không tự đào/cày/trồng gì cả,
+// tránh phá hoại vì Khoa đang bị nhốt trong 1 khu vực kín.
 function startFarmingLoop() {
   if (farmingTickHandle) clearInterval(farmingTickHandle)
   farmingTickHandle = setInterval(async () => {
     if (!bot || !bot.entity) return
 
     const dominant = moodEngine.getDominantMood()
-    if (dominant.type === 'scared') {
-      await doAvoidMonster()
-      return
-    }
     if (dominant.type === 'tired') {
       await doRest()
       return
     }
-
-    // Chu trình canh tác ưu tiên: thu hoạch -> trồng -> cày đất -> đi lang thang
-    const ripe = bot.findBlock({
-      matching: (block) => block.name === 'wheat' && block.metadata === 7 && garden.isInGarden(block.position),
-      maxDistance: 32,
-    })
-    if (ripe) return doHarvest()
-
-    const emptyFarmland = bot.findBlock({
-      matching: (block) => block.name === 'farmland' && garden.isInGarden(block.position),
-      maxDistance: 32,
-      useExtraInfo: (block) => {
-        const above = bot.blockAt(block.position.offset(0, 1, 0))
-        return above && above.name === 'air'
-      },
-    })
-    if (emptyFarmland) return doPlant()
-
-    const grassAvailable = bot.findBlock({
-      matching: (block) => block.name === 'grass_block' && garden.isInGarden(block.position),
-      maxDistance: 32,
-    })
-    if (grassAvailable) return doTill()
 
     return doWander()
   }, CONFIG.farming.tickIntervalMs)
