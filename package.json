@@ -1,1 +1,22 @@
-full code chi tiết
+{
+  "name": "ong-tu-bot",
+  "version": "1.0.0",
+  "description": "Bot Minecraft nhan cach hoa 'Ong Tu'",
+  "main": "index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.5",
+    "firebase-admin": "^12.7.0",
+    "minecraft-data": "^3.111.0",
+    "mineflayer": "^4.37.1",
+    "mineflayer-pathfinder": "^2.4.5",
+    "vec3": "^0.1.8"
+  }
+}
