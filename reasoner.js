@@ -3,12 +3,19 @@ const axios = require('axios');
 const firebase = require('./firebase');
 const getMemoryManager = require('./memory');
 
-// Cấu hình
-const ANALYSIS_INTERVAL = 5;                // Số tin nhắn mới để trigger
-const MIN_TIME_BETWEEN_ANALYSIS = 2 * 60 * 1000; // 2 phút
-const ANALYSIS_TIMEOUT = 30000;            // 30 giây timeout
+// Cấu hình - đọc từ biến môi trường
+const ANALYSIS_INTERVAL = parseInt(process.env.REASONER_INTERVAL) || 5;  // số tin nhắn
+const MIN_TIME_BETWEEN_ANALYSIS = parseInt(process.env.REASONER_MIN_TIME) || 2 * 60 * 1000; // 2 phút
+const ANALYSIS_TIMEOUT = parseInt(process.env.REASONER_TIMEOUT) || 30000; // 30s
+
+// Endpoint và token cho Gemma B (có thể là Gemini API, ngrok, Hugging Face...)
 const GEMMA_B_URL = process.env.GEMMA_B_URL || 'https://api-inference.huggingface.co/models/google/gemma-4-31b-it';
-const GEMMA_B_TOKEN = process.env.GEMMA_B_TOKEN || process.env.BRAIN_TOKEN;
+const GEMMA_B_TOKEN = process.env.GEMMA_B_TOKEN || process.env.BRAIN_TOKEN || '';
+
+// Nếu dùng Gemini API chính thức, bạn có thể set:
+// GEMMA_B_URL=https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent?key=YOUR_API_KEY
+// hoặc dùng biến GEMINI_API_KEY riêng
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 let pendingMessages = 0;
 let isAnalyzing = false;
@@ -21,25 +28,18 @@ let lastStrategyNotes = null;
 function notifyNewMessage() {
     pendingMessages++;
     console.log(`[ReasonerB] New message (pending: ${pendingMessages})`);
-
-    // Nếu đang phân tích, chỉ đếm và thoát
     if (isAnalyzing) return;
-
-    // Kiểm tra điều kiện trigger
-    if (pendingMessages >= ANALYSIS_INTERVAL) {
-        const now = Date.now();
-        if (now - lastAnalysisTime >= MIN_TIME_BETWEEN_ANALYSIS) {
-            triggerAnalysis();
-        } else {
-            // Lên lịch sau khi đủ thời gian
-            const waitTime = MIN_TIME_BETWEEN_ANALYSIS - (now - lastAnalysisTime);
-            console.log(`[ReasonerB] Scheduling analysis in ${waitTime/1000}s`);
-            setTimeout(() => {
-                if (pendingMessages >= ANALYSIS_INTERVAL && !isAnalyzing) {
-                    triggerAnalysis();
-                }
-            }, waitTime + 1000);
-        }
+    const now = Date.now();
+    if (pendingMessages >= ANALYSIS_INTERVAL && (now - lastAnalysisTime) >= MIN_TIME_BETWEEN_ANALYSIS) {
+        triggerAnalysis();
+    } else if (pendingMessages >= ANALYSIS_INTERVAL) {
+        const waitTime = MIN_TIME_BETWEEN_ANALYSIS - (now - lastAnalysisTime);
+        console.log(`[ReasonerB] Scheduling analysis in ${waitTime/1000}s`);
+        setTimeout(() => {
+            if (pendingMessages >= ANALYSIS_INTERVAL && !isAnalyzing) {
+                triggerAnalysis();
+            }
+        }, waitTime + 1000);
     }
 }
 
@@ -51,23 +51,16 @@ function triggerAnalysis() {
     isAnalyzing = true;
     const count = pendingMessages;
     pendingMessages = 0;
-
     console.log(`[ReasonerB] Starting analysis (${count} new messages)`);
-
-    // Chạy bất đồng bộ, không await
     runAnalysis()
-        .then(() => {
-            console.log('[ReasonerB] Analysis completed');
-        })
+        .then(() => console.log('[ReasonerB] Analysis completed'))
         .catch((err) => {
             console.error('[ReasonerB] Analysis error:', err.message);
-            // Khôi phục số tin nhắn nếu lỗi (tùy chọn)
-            pendingMessages += count;
+            pendingMessages += count; // khôi phục nếu lỗi
         })
         .finally(() => {
             isAnalyzing = false;
             lastAnalysisTime = Date.now();
-            // Nếu có tin nhắn mới trong lúc phân tích, kích hoạt lại
             if (pendingMessages >= ANALYSIS_INTERVAL) {
                 setTimeout(() => triggerAnalysis(), 5000);
             }
@@ -81,18 +74,10 @@ async function runAnalysis() {
     const memoryManager = getMemoryManager();
     const memory = memoryManager.memory;
     const affection = memoryManager.getAffection();
-
-    // Đọc dữ liệu từ Firebase (để có đầy đủ)
     const firebaseData = await firebase.loadMemory();
     const fullMemory = firebaseData || memory;
-
-    // Xây dựng prompt
     const prompt = buildPrompt(fullMemory, affection);
-
-    // Gọi Gemma B
     const analysis = await callGemmaB(prompt);
-
-    // Lưu kết quả vào Firebase
     const strategyNotes = {
         analysis,
         timestamp: Date.now(),
@@ -117,10 +102,8 @@ function buildPrompt(memory, affection) {
         .sort((a, b) => b[1] - a[1])
         .slice(0, 5)
         .map(([t, c]) => `${t} (${c})`).join(', ');
-
     return `
 Bạn là nhà phân tích tâm lý, đánh giá dữ liệu về ông Tư - nông dân Minecraft.
-
 DỮ LIỆU:
 - Affection: ${affection}/100
 - Sự kiện gần đây:
@@ -145,9 +128,47 @@ Chỉ trả về JSON hợp lệ, dùng tiếng Việt.
 }
 
 /**
- * Gọi API Gemma B
+ * Gọi API Gemma B (hỗ trợ nhiều loại endpoint)
  */
 async function callGemmaB(prompt) {
+    // Nếu có GEMINI_API_KEY và dùng Gemini chính thức
+    if (GEMINI_API_KEY && GEMMA_B_URL.includes('generativelanguage.googleapis.com')) {
+        return callGeminiAPI(prompt);
+    }
+    // Ngược lại dùng endpoint tùy chỉnh (ngrok, Hugging Face, ...)
+    return callCustomAPI(prompt);
+}
+
+/**
+ * Gọi Gemini API chính thức
+ */
+async function callGeminiAPI(prompt) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent?key=${GEMINI_API_KEY}`;
+    try {
+        const response = await axios.post(url, {
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 600,
+                topP: 0.9,
+            }
+        }, {
+            timeout: ANALYSIS_TIMEOUT,
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!text) throw new Error('Empty Gemini response');
+        return parseAnalysis(text);
+    } catch (err) {
+        console.error('[ReasonerB] Gemini API error:', err.message);
+        throw err;
+    }
+}
+
+/**
+ * Gọi endpoint tùy chỉnh (ngrok, Hugging Face, ...)
+ */
+async function callCustomAPI(prompt) {
     try {
         const response = await axios.post(GEMMA_B_URL, {
             inputs: prompt,
@@ -165,12 +186,11 @@ async function callGemmaB(prompt) {
                 'Content-Type': 'application/json'
             }
         });
-
         let text = response.data?.[0]?.generated_text || response.data;
         if (typeof text !== 'string') text = JSON.stringify(text);
         return parseAnalysis(text);
     } catch (err) {
-        console.error('[ReasonerB] API error:', err.message);
+        console.error('[ReasonerB] Custom API error:', err.message);
         throw err;
     }
 }
@@ -183,7 +203,6 @@ function parseAnalysis(text) {
         const match = text.match(/\{[\s\S]*\}/);
         if (!match) return getDefaultAnalysis();
         const parsed = JSON.parse(match[0]);
-        // Kiểm tra cấu trúc cơ bản
         if (parsed.relationship_assessment && parsed.important_facts) {
             return parsed;
         }
@@ -242,7 +261,4 @@ module.exports = {
     notifyNewMessage,
     getStrategyNotesCache,
     resetReasoner,
-    // Export cho test
-    _triggerAnalysis: triggerAnalysis,
-    _runAnalysis: runAnalysis
 };
