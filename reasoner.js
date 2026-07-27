@@ -1,13 +1,12 @@
-// reasoner.js - Module Reasoner B chạy nền, tận dụng relay URL và token sẵn có
+// reasoner.js - Module Reasoner B chạy nền
 const axios = require('axios');
 const firebase = require('./firebase');
 const getMemoryManager = require('./memory');
 
-const ANALYSIS_INTERVAL = 5; // số tin nhắn mới để trigger
-const MIN_TIME_BETWEEN_ANALYSIS = 2 * 60 * 1000; // 2 phút
-const ANALYSIS_TIMEOUT = 30000; // 30s
-
-// Đọc từ env nếu có, nhưng không bắt buộc
+// Cấu hình
+const ANALYSIS_INTERVAL = 5;
+const MIN_TIME_BETWEEN_ANALYSIS = 2 * 60 * 1000;
+const ANALYSIS_TIMEOUT = 30000;
 const GEMMA_B_URL = process.env.GEMMA_B_URL || null;
 const BRAIN_TOKEN = process.env.BRAIN_TOKEN || '';
 
@@ -44,7 +43,9 @@ function triggerAnalysis() {
         .finally(() => {
             isAnalyzing = false;
             lastAnalysisTime = Date.now();
-            if (pendingMessages >= ANALYSIS_INTERVAL) setTimeout(() => triggerAnalysis(), 5000);
+            if (pendingMessages >= ANALYSIS_INTERVAL) {
+                setTimeout(() => triggerAnalysis(), 5000);
+            }
         });
 }
 
@@ -65,6 +66,7 @@ async function runAnalysis() {
     };
     await firebase.saveStrategyNotes(strategyNotes);
     lastStrategyNotes = strategyNotes;
+    console.log('[ReasonerB] Strategy notes saved');
 }
 
 function buildPrompt(memory, affection) {
@@ -104,13 +106,11 @@ Chỉ trả về JSON hợp lệ, dùng tiếng Việt.
 async function callGemmaB(prompt) {
     let url = GEMMA_B_URL;
     if (!url) {
-        // Lấy relay URL từ Firebase (giống brain A)
         const relay = await firebase.getRelayUrl();
         if (relay) {
             url = relay;
             console.log('[ReasonerB] Using relay URL from Firebase');
         } else {
-            // Fallback: Hugging Face
             url = 'https://api-inference.huggingface.co/models/google/gemma-4-31b-it';
         }
     }
@@ -178,15 +178,42 @@ function parseAnalysis(text) {
 
 function getDefaultAnalysis() {
     return {
-        relationship_assessment: { level: 'bình_thường', explanation: 'Chưa đủ dữ liệu', suggestion: 'Tiếp tục trò chuyện' },
+        relationship_assessment: {
+            level: 'bình_thường',
+            explanation: 'Chưa đủ dữ liệu',
+            suggestion: 'Tiếp tục trò chuyện'
+        },
         important_facts: ['Chưa có sự kiện nổi bật'],
-        tone_suggestion: { style: 'lịch_sự', description: 'Giọng điệu thân thiện', example_phrases: ['Chào anh', 'Cảm ơn'] },
-        conversation_strategy: { topics_to_encourage: ['Vườn tược', 'Cuộc sống'], topics_to_avoid: ['Chủ đề nhạy cảm'], strategy: 'Tạo không khí thoải mái' },
-        memory_highlights: { most_memorable_moments: ['Lần đầu gặp'], recent_impact: 'Chưa có tác động lớn' }
+        tone_suggestion: {
+            style: 'lịch_sự',
+            description: 'Giọng điệu thân thiện',
+            example_phrases: ['Chào anh', 'Cảm ơn']
+        },
+        conversation_strategy: {
+            topics_to_encourage: ['Vườn tược', 'Cuộc sống'],
+            topics_to_avoid: ['Chủ đề nhạy cảm'],
+            strategy: 'Tạo không khí thoải mái'
+        },
+        memory_highlights: {
+            most_memorable_moments: ['Lần đầu gặp'],
+            recent_impact: 'Chưa có tác động lớn'
+        }
     };
 }
 
-function getStrategyNotesCache() { return lastStrategyNotes; }
-function resetReasoner() { pendingMessages = 0; isAnalyzing = false; lastAnalysisTime = 0; lastStrategyNotes = null; }
+function getStrategyNotesCache() {
+    return lastStrategyNotes;
+}
 
-module.exports = { notifyNewMessage, getStrategyNotesCache, resetReasoner };
+function resetReasoner() {
+    pendingMessages = 0;
+    isAnalyzing = false;
+    lastAnalysisTime = 0;
+    lastStrategyNotes = null;
+}
+
+module.exports = {
+    notifyNewMessage,
+    getStrategyNotesCache,
+    resetReasoner
+};
