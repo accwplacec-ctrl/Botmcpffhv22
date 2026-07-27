@@ -1,4 +1,4 @@
-// firebase.js - giữ nguyên code cũ, thêm 2 hàm cuối
+// firebase.js
 const admin = require('firebase-admin');
 const config = require('./config');
 
@@ -29,13 +29,18 @@ function initFirebase() {
     }
 }
 
-// === Các hàm cũ (giữ nguyên) ===
 async function loadMemory() {
     if (!isInitialized) initFirebase();
     if (!database) return null;
     try {
         const snapshot = await database.ref('bot_memory').once('value');
-        return snapshot.val();
+        const data = snapshot.val();
+        if (data) {
+            console.log('[Firebase] Memory loaded');
+            return data;
+        }
+        console.log('[Firebase] No memory found');
+        return null;
     } catch (e) {
         console.error('[Firebase] Load memory error:', e);
         return null;
@@ -47,6 +52,7 @@ async function saveMemory(memory) {
     if (!database) return false;
     try {
         await database.ref('bot_memory').set(memory);
+        console.log('[Firebase] Memory saved');
         return true;
     } catch (e) {
         console.error('[Firebase] Save memory error:', e);
@@ -59,14 +65,16 @@ async function getRelayUrl() {
     if (!database) return null;
     try {
         const snapshot = await database.ref('relay_url').once('value');
-        return snapshot.val();
+        const url = snapshot.val();
+        if (url) console.log('[Firebase] Relay URL fetched');
+        return url;
     } catch (e) {
         console.error('[Firebase] Get relay URL error:', e);
         return null;
     }
 }
 
-// === HÀM MỚI CHO REASONER B ===
+// ===== NEW METHODS FOR REASONER B =====
 async function saveStrategyNotes(notes) {
     if (!isInitialized) initFirebase();
     if (!database) return false;
@@ -86,10 +94,31 @@ async function loadStrategyNotes() {
     try {
         const snapshot = await database.ref('strategy_notes').once('value');
         const data = snapshot.val();
-        if (data) console.log('[Firebase] Strategy notes loaded');
-        return data;
+        if (data) {
+            console.log('[Firebase] Strategy notes loaded');
+            return data;
+        }
+        return null;
     } catch (e) {
         console.error('[Firebase] Load strategy notes error:', e);
+        return null;
+    }
+}
+
+async function loadFullDataForReasoner() {
+    if (!isInitialized) initFirebase();
+    if (!database) return null;
+    try {
+        const [memorySnapshot, strategySnapshot] = await Promise.all([
+            database.ref('bot_memory').once('value'),
+            database.ref('strategy_notes').once('value')
+        ]);
+        return {
+            memory: memorySnapshot.val() || null,
+            strategy: strategySnapshot.val() || null
+        };
+    } catch (e) {
+        console.error('[Firebase] Load full data error:', e);
         return null;
     }
 }
@@ -99,5 +128,6 @@ module.exports = {
     saveMemory,
     getRelayUrl,
     saveStrategyNotes,
-    loadStrategyNotes
+    loadStrategyNotes,
+    loadFullDataForReasoner
 };
