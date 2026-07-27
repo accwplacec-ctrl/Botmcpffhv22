@@ -10,8 +10,8 @@ const getWorkingMemory = require('./workingMemory');
 const getMoodEngine = require('./moodEngine');
 const proactive = require('./proactive');
 const garden = require('./garden');
+const { notifyNewMessage } = require('./reasoner'); // 👈 THÊM DÒNG NÀY
 
-// ========== KHỞI TẠO ==========
 console.log('🤖 Bot Ông Tư v9 starting...');
 
 // Khởi tạo các module
@@ -53,11 +53,8 @@ function createBot() {
   };
 
   bot = mineflayer.createBot(botConfig);
-  
-  // Load plugins
   bot.loadPlugin(pathfinder);
-  
-  // Setup pathfinder
+
   bot.once('spawn', () => {
     const mcData = require('minecraft-data')(bot.version);
     const defaultMove = new Movements(bot, mcData);
@@ -68,46 +65,29 @@ function createBot() {
     bot.pathfinder.setMovements(defaultMove);
   });
 
-  // ========== EVENT: SPAWN ==========
   bot.once('spawn', async () => {
     console.log(`✅ Bot đã vào server! Tên: ${bot.username}`);
     isConnected = true;
     reconnectAttempts = 0;
     botReady = true;
-    
+
     try {
-      // Khởi tạo memory
       await memoryManager.init();
       console.log('📦 Memory loaded');
-      
-      // Khởi tạo mood
       moodEngine.init(bot);
       console.log('😊 Mood engine started');
-      
-      // Đăng ký sự kiện
       registerEvents();
-      
-      // Bắt đầu farming loop
       startFarmingLoop();
-      
-      // Bắt đầu check interval
       startCheckInterval();
-      
-      // Bắt đầu proactive chat
       proactive.init(bot);
-      
       console.log('🚀 Bot ready!');
       bot.chat('/me đã vào vườn!');
-      
-      // Move về vườn
       moveToGarden();
-      
     } catch (error) {
       console.error('❌ Init error:', error);
     }
   });
 
-  // ========== EVENT: ERROR ==========
   bot.on('error', (err) => {
     console.error('❌ Bot error:', err.message);
     if (err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT') {
@@ -115,13 +95,11 @@ function createBot() {
     }
   });
 
-  // ========== EVENT: END ==========
   bot.on('end', (reason) => {
     console.log(`🔴 Bot disconnected: ${reason || 'Unknown reason'}`);
     handleDisconnect();
   });
 
-  // ========== EVENT: KICK ==========
   bot.on('kicked', (reason) => {
     console.log(`👢 Bot kicked: ${reason}`);
     handleDisconnect();
@@ -138,39 +116,36 @@ function registerEvents() {
   bot.on('chat', async (username, message) => {
     if (username === bot.username) return;
     if (isProcessing) return;
-    
-    // Cooldown
+
     const now = Date.now();
     if (now - lastChatTime < CHAT_COOLDOWN) return;
     lastChatTime = now;
 
-    // Kiểm tra khoảng cách
     const player = bot.players[username];
     if (!player || !player.entity) {
-      // Nếu không thấy player, vẫn reply nhưng ít nhiệt tình hơn
       console.log(`💬 [${username}] (không thấy): ${message}`);
     } else {
       const dist = bot.entity.position.distanceTo(player.entity.position);
       if (dist > GARDEN_RADIUS * 2) {
         console.log(`💬 [${username}] (xa ${Math.round(dist)} blocks): ${message}`);
-        // Không reply nếu quá xa
         return;
       }
       console.log(`💬 [${username}] (${Math.round(dist)} blocks): ${message}`);
     }
 
-    // Chỉ tương tác với owner hoặc người trong vườn
     if (username !== ownerName) {
       const player = bot.players[username];
       if (player && player.entity) {
         const dist = bot.entity.position.distanceTo(player.entity.position);
         if (dist > GARDEN_RADIUS) {
-          return; // Không reply với người ngoài vườn
+          return;
         }
       }
     }
 
-    // Xử lý chat
+    // 👇 Gọi Reasoner B để đếm tin nhắn (chạy nền, không chặn)
+    notifyNewMessage();
+
     isProcessing = true;
     try {
       await handleChat(username, message);
@@ -185,8 +160,12 @@ function registerEvents() {
   bot.on('whisper', async (username, message) => {
     if (username === bot.username) return;
     if (isProcessing) return;
-    
+
     console.log(`🤫 [${username}] whisper: ${message}`);
+
+    // 👇 Gọi Reasoner B cho whisper
+    notifyNewMessage();
+
     isProcessing = true;
     try {
       await handleChat(username, message, true);
@@ -201,8 +180,6 @@ function registerEvents() {
   bot.on('playerJoined', (player) => {
     if (player.username === bot.username) return;
     console.log(`👤 ${player.username} joined`);
-    
-    // Nếu là owner, chào hỏi
     if (player.username === ownerName) {
       setTimeout(() => {
         const greetings = [
@@ -226,7 +203,6 @@ function registerEvents() {
 
   // ===== PHYSICS =====
   bot.on('physicTick', () => {
-    // Kiểm tra nếu bot bị rơi khỏi thế giới
     if (bot.entity.position.y < -50) {
       console.log('⚠️ Bot falling! Trying to recover...');
       bot.chat('/spawn');
@@ -236,7 +212,6 @@ function registerEvents() {
   // ===== ITEM DROP =====
   bot.on('itemDrop', (entity) => {
     if (!entity || !entity.position) return;
-    // Check if item is in garden
     if (garden.isInGarden(entity.position, gardenCenter, GARDEN_RADIUS)) {
       console.log(`📦 Item dropped in garden: ${entity.name || 'unknown'}`);
       workingMemory.setFlag('item_dropped', true, 60000);
@@ -245,23 +220,17 @@ function registerEvents() {
 
   // ===== BLOCK UPDATE =====
   bot.on('blockUpdate', (oldBlock, newBlock) => {
-    // Phát hiện phá hoại vườn
     if (oldBlock && newBlock) {
-      // Kiểm tra farmland bị phá
       if (oldBlock.name === 'farmland' && newBlock.name !== 'farmland') {
         const pos = oldBlock.position;
         const dist = Math.sqrt(
-          Math.pow(pos.x - gardenCenter.x, 2) + 
+          Math.pow(pos.x - gardenCenter.x, 2) +
           Math.pow(pos.z - gardenCenter.z, 2)
         );
         if (dist < GARDEN_RADIUS) {
           console.log(`⚠️ Farmland broken at ${pos.x}, ${pos.z}`);
           workingMemory.setFlag('farmland_broken', true, 60000);
-          
-          // Lưu vào memory dài hạn
           memoryManager.addEvent(`Có người phá ruộng tại (${pos.x}, ${pos.z})`, 3);
-          
-          // Phản ứng nếu đang ở gần
           if (workingMemory.getFlag('owner_nearby')) {
             setTimeout(() => {
               const reactions = [
@@ -283,8 +252,6 @@ function registerEvents() {
     console.log(`💀 Bot died (${deathCount} times)`);
     memoryManager.setLastDeath(`Chết lần ${deathCount} tại vườn`);
     workingMemory.setFlag('just_died', true, 120000);
-    
-    // Tự động respawn
     setTimeout(() => {
       bot.chat('/spawn');
       console.log('🔄 Respawning...');
@@ -312,33 +279,25 @@ function registerEvents() {
 
 // ========== XỬ LÝ CHAT ==========
 async function handleChat(username, message, isWhisper = false) {
-  // Kiểm tra spam
   if (isProcessing) return;
-  
-  // Lưu vào working memory
+
   workingMemory.addConversation(username, message);
-  
-  // Update owner name nếu chưa có
+
   if (!ownerName || ownerName === 'chủ') {
     ownerName = username;
     console.log(`👤 Owner set to: ${ownerName}`);
   }
 
-  // Cập nhật tình cảm - mỗi lần chat tăng 0.5
   memoryManager.changeAffection(0.5);
 
-  // Lấy context
   const affection = memoryManager.getAffection();
   const mood = moodEngine.getCurrentMood();
   const memory = memoryManager.getMemorySummary();
   const workingMem = workingMemory.getSummary();
   const recentChats = workingMemory.getRecentConversations(3);
   const questionsAsked = memoryManager.getRecentQuestions(5);
-  
-  // Lấy inventory
   const inventory = getInventorySummary();
 
-  // Gọi brain
   const result = await askBrain(message, {
     ownerName: ownerName,
     affection: affection,
@@ -350,23 +309,20 @@ async function handleChat(username, message, isWhisper = false) {
     questionsAsked: questionsAsked
   });
 
-  // Lưu câu hỏi mới (nếu có)
   if (result.questions && result.questions.length > 0) {
     result.questions.forEach(q => {
       memoryManager.addQuestionAsked(q);
     });
   }
 
-  // Lưu topic yêu thích
   const words = message.toLowerCase().split(' ');
   const importantWords = words.filter(w => w.length > 3);
   importantWords.forEach(word => {
     memoryManager.addFavoriteTopic(word);
   });
 
-  // Gửi phản hồi
   const reply = result.reply || 'Tui hông biết nói gì nữa!';
-  
+
   if (isWhisper) {
     bot.whisper(username, reply);
   } else {
@@ -375,67 +331,48 @@ async function handleChat(username, message, isWhisper = false) {
 
   console.log(`🤖 Reply to ${username}: ${reply}`);
 
-  // Xử lý action
-  await handleActions(username);
-
-  // Cập nhật lần tương tác cuối
   memoryManager.memory.lastInteraction = Date.now();
 }
 
 // ========== LẤY INVENTORY SUMMARY ==========
 function getInventorySummary() {
   if (!bot || !bot.inventory) return 'Chưa có gì';
-  
   try {
     const items = bot.inventory.items();
     const wheats = items.filter(i => i.name === 'wheat');
     const seeds = items.filter(i => i.name === 'wheat_seeds');
     const breads = items.filter(i => i.name === 'bread');
-    
     const parts = [];
     if (wheats.length > 0) parts.push(`${wheats.length} cục lúa`);
     if (seeds.length > 0) parts.push(`${seeds.length} hạt giống`);
     if (breads.length > 0) parts.push(`${breads.length} ổ bánh mì`);
-    
     return parts.length > 0 ? parts.join(', ') : 'Túi rỗng';
   } catch (error) {
     return 'Không lấy được inventory';
   }
 }
 
-// ========== XỬ LÝ ACTIONS ==========
-async function handleActions(username) {
-  // Actions sẽ được xử lý dựa trên response từ brain
-  // Hoặc các sự kiện trong game
-}
-
 // ========== DI CHUYỂN VỀ VƯỜN ==========
 function moveToGarden() {
   if (!bot || !bot.pathfinder) return;
-  
   const pos = {
     x: gardenCenter.x,
     z: gardenCenter.z,
     y: 64
   };
-  
   console.log(`🚶 Moving to garden: ${pos.x}, ${pos.z}`);
-  
   try {
     const goal = new GoalXZ(pos.x, pos.z);
     bot.pathfinder.setGoal(goal);
-    
-    // Check after 5 seconds
     setTimeout(() => {
       if (bot && bot.pathfinder) {
         const current = bot.entity.position;
         const dist = Math.sqrt(
-          Math.pow(current.x - pos.x, 2) + 
+          Math.pow(current.x - pos.x, 2) +
           Math.pow(current.z - pos.z, 2)
         );
         if (dist > 5) {
           console.log(`⚠️ Still far from garden: ${Math.round(dist)} blocks`);
-          // Try again
           bot.pathfinder.setGoal(new GoalXZ(pos.x, pos.z));
         } else {
           console.log('✅ Arrived at garden!');
@@ -451,45 +388,33 @@ function moveToGarden() {
 // ========== FARMING LOOP ==========
 function startFarmingLoop() {
   if (farmInterval) clearInterval(farmInterval);
-  
   farmInterval = setInterval(() => {
     if (!bot || !botReady || !isConnected) return;
-    
     try {
-      // Kiểm tra và thực hiện các hoạt động nông nghiệp
       if (garden.isInGarden(bot.entity.position, gardenCenter, GARDEN_RADIUS)) {
         workingMemory.setFlag('in_garden', true);
-        
-        // Tự động thu hoạch lúa chín
         autoHarvest();
-        
-        // Tự động trồng lúa
         autoPlant();
       }
     } catch (error) {
       console.error('❌ Farming error:', error);
     }
-  }, 5000); // Mỗi 5 giây
+  }, 5000);
 }
 
 // ========== AUTO HARVEST ==========
 function autoHarvest() {
   if (!bot || !bot.inventory) return;
-  
   try {
-    // Tìm lúa chín gần đó
     const wheatBlocks = bot.findBlocks({
       matching: ['wheat'],
       maxDistance: 5,
       count: 10
     });
-    
     if (wheatBlocks && wheatBlocks.length > 0) {
-      // Kiểm tra độ chín (age = 7 là chín)
       for (const pos of wheatBlocks) {
         const block = bot.blockAt(pos);
         if (block && block.metadata === 7) {
-          // Thu hoạch
           console.log(`🌾 Harvesting wheat at ${pos.x}, ${pos.z}`);
           bot.dig(block, (err) => {
             if (!err) {
@@ -498,36 +423,28 @@ function autoHarvest() {
               console.log('✅ Harvested wheat!');
             }
           });
-          break; // Thu hoạch 1 cây mỗi lần để tránh spam
+          break;
         }
       }
     }
-  } catch (error) {
-    // Bỏ qua lỗi
-  }
+  } catch (error) {}
 }
 
 // ========== AUTO PLANT ==========
 function autoPlant() {
   if (!bot || !bot.inventory) return;
-  
   try {
-    // Tìm seeds trong inventory
     const seeds = bot.inventory.items().find(i => i.name === 'wheat_seeds');
     if (!seeds) return;
-    
-    // Tìm đất trồng trống
     const farmlandBlocks = bot.findBlocks({
       matching: ['farmland'],
       maxDistance: 5,
       count: 10
     });
-    
     if (farmlandBlocks && farmlandBlocks.length > 0) {
       for (const pos of farmlandBlocks) {
         const above = bot.blockAt({x: pos.x, y: pos.y + 1, z: pos.z});
         if (above && above.name === 'air') {
-          // Trồng lúa
           console.log(`🌱 Planting wheat at ${pos.x}, ${pos.z}`);
           bot.placeBlock(above, seeds, (err) => {
             if (!err) {
@@ -539,34 +456,26 @@ function autoPlant() {
         }
       }
     }
-  } catch (error) {
-    // Bỏ qua lỗi
-  }
+  } catch (error) {}
 }
 
 // ========== CHECK INTERVAL ==========
 function startCheckInterval() {
   if (checkInterval) clearInterval(checkInterval);
-  
   checkInterval = setInterval(() => {
     if (!bot || !isConnected) return;
-    
     try {
-      // Kiểm tra vị trí
       if (bot.entity) {
         const pos = bot.entity.position;
         const dist = Math.sqrt(
-          Math.pow(pos.x - gardenCenter.x, 2) + 
+          Math.pow(pos.x - gardenCenter.x, 2) +
           Math.pow(pos.z - gardenCenter.z, 2)
         );
-        
         if (dist > GARDEN_RADIUS * 1.5) {
           console.log(`🚶 Bot outside garden (${Math.round(dist)} blocks), moving back...`);
           moveToGarden();
         }
       }
-      
-      // Kiểm tra owner
       if (ownerName) {
         const player = bot.players[ownerName];
         if (player && player.entity) {
@@ -581,8 +490,6 @@ function startCheckInterval() {
           }
         }
       }
-      
-      // Kiểm tra health
       if (bot.health < 5) {
         console.log('❤️ Low health!');
         const food = bot.inventory.items().find(i => i.name === 'bread');
@@ -590,17 +497,14 @@ function startCheckInterval() {
           bot.eat(food);
         }
       }
-      
-      // Check memory stats
       const stats = memoryManager.getStats();
-      if (Math.random() < 0.01) { // 1% chance
+      if (Math.random() < 0.01) {
         console.log('📊 Memory stats:', stats);
       }
-      
     } catch (error) {
       console.error('❌ Check interval error:', error);
     }
-  }, 30000); // Mỗi 30 giây
+  }, 30000);
 }
 
 // ========== XỬ LÝ DISCONNECT ==========
@@ -608,8 +512,6 @@ function handleDisconnect() {
   isConnected = false;
   botReady = false;
   console.log('🔌 Disconnected, attempting to reconnect...');
-  
-  // Clear intervals
   if (farmInterval) {
     clearInterval(farmInterval);
     farmInterval = null;
@@ -618,8 +520,6 @@ function handleDisconnect() {
     clearInterval(checkInterval);
     checkInterval = null;
   }
-  
-  // Reconnect
   setTimeout(() => {
     reconnectAttempts++;
     if (reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
@@ -659,15 +559,12 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-// ========== UNHANDLED ERRORS ==========
 process.on('uncaughtException', (error) => {
   console.error('💥 Uncaught exception:', error);
-  // Don't exit, just log
 });
 
 process.on('unhandledRejection', (reason) => {
   console.error('💥 Unhandled rejection:', reason);
-  // Don't exit, just log
 });
 
 console.log('✅ Bot script loaded!');
