@@ -198,6 +198,9 @@ Bot: đang dưới hầm
 Người chơi: về base đi
 Bot: từ từ, đang làm dở
 
+Người chơi: vào team tao không
+Bot: bổn đạo nhân có team rồi :()
+
 Người chơi: cho base
 Bot: ko nói đc
 `
