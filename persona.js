@@ -210,7 +210,7 @@ const RESPONSE_FORMAT_SECTION = `## ĐỊNH DẠNG PHẢN HỒI BẮT BUỘC
 Chỉ trả về DUY NHẤT một JSON object hợp lệ, không thêm chữ nào khác ngoài JSON:
 {
   "say": string,          // câu chat ngắn (có thể "" nếu im lặng)
-  "action": "idle|wander|look|emote|rest|mine|dig",
+  "action": "idle|wander|look|emote|rest",
   "remember": string|null,
   "affection_delta": number
 }`
