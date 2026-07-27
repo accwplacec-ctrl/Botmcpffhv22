@@ -40,8 +40,8 @@ const GARDEN_RADIUS = config.GARDEN_RADIUS || 20;
 let deathCount = 0;
 
 // ========== BIẾN CHO LUỒNG HỘI THOẠI ==========
-const CONVERSATION_TIMEOUT = 30 * 1000; // 30 giây giữ luồng
-const REPLY_COOLDOWN = 2000; // 2 giây giữa các reply
+const CONVERSATION_TIMEOUT = 30 * 1000; // 30 giây
+const REPLY_COOLDOWN = 2000; // 2 giây
 let activeConversation = {
     username: null,
     expiry: 0,
@@ -52,8 +52,9 @@ let activeConversation = {
 function isQuestion(text) {
     if (!text) return false;
     if (text.includes('?')) return true;
-    const questionWords = ['sao', 'thế nào', 'là gì', 'ở đâu', 'khi nào', 'tại sao', 
-                           'có...không', 'không', 'hả', 'nhỉ', 'chứ', 'à', 'ư', 'hở'];
+    const questionWords = ['sao', 'thế nào', 'là gì', 'ở đâu', 'khi nào', 'tại sao',
+        'có...không', 'không', 'hả', 'nhỉ', 'chứ', 'à', 'ư', 'hở', 'chăng', 'phải không',
+        'đúng không', 'được không', 'chưa', 'rồi sao', 'thế à'];
     const lower = text.toLowerCase();
     return questionWords.some(word => lower.includes(word));
 }
@@ -69,7 +70,9 @@ function isMentioned(message, botName) {
         'lão nông',
         'bác tư',
         'chú tư',
-        'bố già'
+        'bố già',
+        'tư',
+        'bác nông'
     ];
     return nameTriggers.some(name => msgLower.includes(name));
 }
@@ -527,7 +530,7 @@ function autoPlant() {
         });
         if (farmlandBlocks && farmlandBlocks.length > 0) {
             for (const pos of farmlandBlocks) {
-                const above = bot.blockAt({x: pos.x, y: pos.y + 1, z: pos.z});
+                const above = bot.blockAt({ x: pos.x, y: pos.y + 1, z: pos.z });
                 if (above && above.name === 'air') {
                     console.log(`🌱 Planting wheat at ${pos.x}, ${pos.z}`);
                     bot.placeBlock(above, seeds, (err) => {
