@@ -1,71 +1,90 @@
-'use strict'
+// garden.js
+const Vec3 = require('vec3');
 
-const { Vec3 } = require('vec3')
-const { CONFIG } = require('./config')
+function isInGarden(position, center, radius) {
+  if (!position || !center) return false;
+  
+  const dx = position.x - center.x;
+  const dz = position.z - center.z;
+  const dist = Math.sqrt(dx * dx + dz * dz);
+  return dist <= radius;
+}
 
-/**
- * garden.js
- * ------------------------------------------------------------
- * Tien ich lien quan den bounding box khu vuon: kiem tra vi tri
- * co nam trong vuon khong, gioi han (clamp) 1 diem ve trong vuon,
- * sinh ngau nhien 1 diem trong vuon (dung cho wander).
- * ------------------------------------------------------------
- */
-
-function bounds() {
-  const g = CONFIG.garden
+function getRandomGardenPosition(center, radius) {
+  const angle = Math.random() * 2 * Math.PI;
+  const dist = Math.random() * radius * 0.8; // 80% của radius để không ra ngoài
   return {
-    minX: Math.min(g.minX, g.maxX),
-    maxX: Math.max(g.minX, g.maxX),
-    minZ: Math.min(g.minZ, g.maxZ),
-    maxZ: Math.max(g.minZ, g.maxZ),
-    yMin: g.yMin,
-    yMax: g.yMax,
+    x: center.x + Math.cos(angle) * dist,
+    z: center.z + Math.sin(angle) * dist
+  };
+}
+
+function getClosestFarmland(bot, center, radius) {
+  if (!bot) return null;
+  
+  try {
+    const blocks = bot.findBlocks({
+      matching: ['farmland'],
+      maxDistance: radius,
+      count: 20
+    });
+    
+    if (!blocks || blocks.length === 0) return null;
+    
+    // Sắp xếp theo khoảng cách
+    const sorted = blocks.map(pos => {
+      const dist = bot.entity.position.distanceTo(pos);
+      return { pos, dist };
+    }).sort((a, b) => a.dist - b.dist);
+    
+    return sorted[0].pos;
+  } catch (error) {
+    return null;
   }
 }
 
-function isInGarden(pos) {
-  if (!pos) return false
-  const b = bounds()
-  return (
-    pos.x >= b.minX &&
-    pos.x <= b.maxX &&
-    pos.z >= b.minZ &&
-    pos.z <= b.maxZ &&
-    pos.y >= b.yMin &&
-    pos.y <= b.yMax
-  )
-}
-
-function clampToGarden(pos) {
-  const b = bounds()
-  return {
-    x: Math.max(b.minX, Math.min(b.maxX, pos.x)),
-    y: Math.max(b.yMin, Math.min(b.yMax, pos.y)),
-    z: Math.max(b.minZ, Math.min(b.maxZ, pos.z)),
+function countWheatAround(bot, radius = 5) {
+  if (!bot) return 0;
+  
+  try {
+    const blocks = bot.findBlocks({
+      matching: ['wheat'],
+      maxDistance: radius,
+      count: 50
+    });
+    return blocks.length;
+  } catch (error) {
+    return 0;
   }
 }
 
-// Sinh 1 diem (x, z) ngau nhien trong vuon; y se duoc do gioi han (groundY) o noi goi (index.js)
-function randomPointInGarden() {
-  const b = bounds()
-  const x = b.minX + Math.random() * (b.maxX - b.minX)
-  const z = b.minZ + Math.random() * (b.maxZ - b.minZ)
-  return { x, z }
-}
-
-// Tim do cao mat dat gan nhat tai (x, z) bang cach do tu tren xuong trong pham vi vuon
-// Tra ve null neu khong tim thay block ran nao (an toan de bo qua diem nay)
-function findGroundY(bot, x, z) {
-  const b = bounds()
-  const startY = Math.min(b.yMax, Math.floor(bot.entity.position.y) + 5)
-  for (let y = startY; y >= b.yMin; y--) {
-    const block = bot.blockAt(new Vec3(Math.floor(x), y, Math.floor(z)))
-    if (block && block.boundingBox === 'block') {
-      return y + 1
+function countReadyWheat(bot, radius = 5) {
+  if (!bot) return 0;
+  
+  try {
+    const blocks = bot.findBlocks({
+      matching: ['wheat'],
+      maxDistance: radius,
+      count: 50
+    });
+    
+    let ready = 0;
+    for (const pos of blocks) {
+      const block = bot.blockAt(pos);
+      if (block && block.metadata === 7) {
+        ready++;
+      }
     }
+    return ready;
+  } catch (error) {
+    return 0;
   }
-  return null
 }
 
-module.exports = { bounds, isInGarden, clampToGarden, randomPointInGarden, findGroundY }
+module.exports = {
+  isInGarden,
+  getRandomGardenPosition,
+  getClosestFarmland,
+  countWheatAround,
+  countReadyWheat
+};
