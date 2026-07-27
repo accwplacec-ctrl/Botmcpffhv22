@@ -1,75 +1,53 @@
-// reasoner.js - Module Reasoner B (Gemma-4-31b-it) chạy nền
+// reasoner.js - Module Reasoner B chạy nền, tận dụng relay URL và token sẵn có
 const axios = require('axios');
 const firebase = require('./firebase');
 const getMemoryManager = require('./memory');
 
-// Cấu hình - đọc từ biến môi trường
-const ANALYSIS_INTERVAL = parseInt(process.env.REASONER_INTERVAL) || 5;  // số tin nhắn
-const MIN_TIME_BETWEEN_ANALYSIS = parseInt(process.env.REASONER_MIN_TIME) || 2 * 60 * 1000; // 2 phút
-const ANALYSIS_TIMEOUT = parseInt(process.env.REASONER_TIMEOUT) || 30000; // 30s
+const ANALYSIS_INTERVAL = 5; // số tin nhắn mới để trigger
+const MIN_TIME_BETWEEN_ANALYSIS = 2 * 60 * 1000; // 2 phút
+const ANALYSIS_TIMEOUT = 30000; // 30s
 
-// Endpoint và token cho Gemma B (có thể là Gemini API, ngrok, Hugging Face...)
-const GEMMA_B_URL = process.env.GEMMA_B_URL || 'https://api-inference.huggingface.co/models/google/gemma-4-31b-it';
-const GEMMA_B_TOKEN = process.env.GEMMA_B_TOKEN || process.env.BRAIN_TOKEN || '';
-
-// Nếu dùng Gemini API chính thức, bạn có thể set:
-// GEMMA_B_URL=https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent?key=YOUR_API_KEY
-// hoặc dùng biến GEMINI_API_KEY riêng
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// Đọc từ env nếu có, nhưng không bắt buộc
+const GEMMA_B_URL = process.env.GEMMA_B_URL || null;
+const BRAIN_TOKEN = process.env.BRAIN_TOKEN || '';
 
 let pendingMessages = 0;
 let isAnalyzing = false;
 let lastAnalysisTime = 0;
 let lastStrategyNotes = null;
 
-/**
- * Gọi khi có tin nhắn mới (từ index.js)
- */
 function notifyNewMessage() {
     pendingMessages++;
-    console.log(`[ReasonerB] New message (pending: ${pendingMessages})`);
     if (isAnalyzing) return;
     const now = Date.now();
     if (pendingMessages >= ANALYSIS_INTERVAL && (now - lastAnalysisTime) >= MIN_TIME_BETWEEN_ANALYSIS) {
         triggerAnalysis();
     } else if (pendingMessages >= ANALYSIS_INTERVAL) {
         const waitTime = MIN_TIME_BETWEEN_ANALYSIS - (now - lastAnalysisTime);
-        console.log(`[ReasonerB] Scheduling analysis in ${waitTime/1000}s`);
         setTimeout(() => {
-            if (pendingMessages >= ANALYSIS_INTERVAL && !isAnalyzing) {
-                triggerAnalysis();
-            }
+            if (pendingMessages >= ANALYSIS_INTERVAL && !isAnalyzing) triggerAnalysis();
         }, waitTime + 1000);
     }
 }
 
-/**
- * Kích hoạt phân tích nền (fire-and-forget)
- */
 function triggerAnalysis() {
     if (isAnalyzing) return;
     isAnalyzing = true;
     const count = pendingMessages;
     pendingMessages = 0;
-    console.log(`[ReasonerB] Starting analysis (${count} new messages)`);
     runAnalysis()
         .then(() => console.log('[ReasonerB] Analysis completed'))
-        .catch((err) => {
+        .catch(err => {
             console.error('[ReasonerB] Analysis error:', err.message);
-            pendingMessages += count; // khôi phục nếu lỗi
+            pendingMessages += count;
         })
         .finally(() => {
             isAnalyzing = false;
             lastAnalysisTime = Date.now();
-            if (pendingMessages >= ANALYSIS_INTERVAL) {
-                setTimeout(() => triggerAnalysis(), 5000);
-            }
+            if (pendingMessages >= ANALYSIS_INTERVAL) setTimeout(() => triggerAnalysis(), 5000);
         });
 }
 
-/**
- * Phân tích thực tế
- */
 async function runAnalysis() {
     const memoryManager = getMemoryManager();
     const memory = memoryManager.memory;
@@ -87,12 +65,8 @@ async function runAnalysis() {
     };
     await firebase.saveStrategyNotes(strategyNotes);
     lastStrategyNotes = strategyNotes;
-    console.log('[ReasonerB] Strategy notes saved');
 }
 
-/**
- * Xây dựng prompt cho Gemma B
- */
 function buildPrompt(memory, affection) {
     const facts = memory.facts || [];
     const events = (memory.events || []).slice(-10).map(e => typeof e === 'string' ? e : e.event).join('\n- ');
@@ -127,50 +101,29 @@ Chỉ trả về JSON hợp lệ, dùng tiếng Việt.
 `;
 }
 
-/**
- * Gọi API Gemma B (hỗ trợ nhiều loại endpoint)
- */
 async function callGemmaB(prompt) {
-    // Nếu có GEMINI_API_KEY và dùng Gemini chính thức
-    if (GEMINI_API_KEY && GEMMA_B_URL.includes('generativelanguage.googleapis.com')) {
-        return callGeminiAPI(prompt);
+    let url = GEMMA_B_URL;
+    if (!url) {
+        // Lấy relay URL từ Firebase (giống brain A)
+        const relay = await firebase.getRelayUrl();
+        if (relay) {
+            url = relay;
+            console.log('[ReasonerB] Using relay URL from Firebase');
+        } else {
+            // Fallback: Hugging Face
+            url = 'https://api-inference.huggingface.co/models/google/gemma-4-31b-it';
+        }
     }
-    // Ngược lại dùng endpoint tùy chỉnh (ngrok, Hugging Face, ...)
-    return callCustomAPI(prompt);
+    if (url.includes('huggingface.co')) {
+        return callHuggingFace(url, prompt);
+    } else {
+        return callCustomEndpoint(url, prompt);
+    }
 }
 
-/**
- * Gọi Gemini API chính thức
- */
-async function callGeminiAPI(prompt) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent?key=${GEMINI_API_KEY}`;
+async function callHuggingFace(url, prompt) {
     try {
         const response = await axios.post(url, {
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-                temperature: 0.7,
-                maxOutputTokens: 600,
-                topP: 0.9,
-            }
-        }, {
-            timeout: ANALYSIS_TIMEOUT,
-            headers: { 'Content-Type': 'application/json' }
-        });
-        const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!text) throw new Error('Empty Gemini response');
-        return parseAnalysis(text);
-    } catch (err) {
-        console.error('[ReasonerB] Gemini API error:', err.message);
-        throw err;
-    }
-}
-
-/**
- * Gọi endpoint tùy chỉnh (ngrok, Hugging Face, ...)
- */
-async function callCustomAPI(prompt) {
-    try {
-        const response = await axios.post(GEMMA_B_URL, {
             inputs: prompt,
             parameters: {
                 max_new_tokens: 600,
@@ -182,7 +135,7 @@ async function callCustomAPI(prompt) {
         }, {
             timeout: ANALYSIS_TIMEOUT,
             headers: {
-                'Authorization': `Bearer ${GEMMA_B_TOKEN}`,
+                'Authorization': `Bearer ${BRAIN_TOKEN}`,
                 'Content-Type': 'application/json'
             }
         });
@@ -190,75 +143,50 @@ async function callCustomAPI(prompt) {
         if (typeof text !== 'string') text = JSON.stringify(text);
         return parseAnalysis(text);
     } catch (err) {
-        console.error('[ReasonerB] Custom API error:', err.message);
+        console.error('[ReasonerB] HuggingFace error:', err.message);
         throw err;
     }
 }
 
-/**
- * Parse JSON từ response
- */
+async function callCustomEndpoint(url, prompt) {
+    try {
+        const payload = { prompt, message: '', token: BRAIN_TOKEN };
+        const response = await axios.post(url, payload, {
+            timeout: ANALYSIS_TIMEOUT,
+            headers: { 'Content-Type': 'application/json' }
+        });
+        let text = response.data?.reply || response.data?.generated_text || response.data;
+        if (typeof text !== 'string') text = JSON.stringify(text);
+        return parseAnalysis(text);
+    } catch (err) {
+        console.error('[ReasonerB] Custom endpoint error:', err.message);
+        throw err;
+    }
+}
+
 function parseAnalysis(text) {
     try {
         const match = text.match(/\{[\s\S]*\}/);
         if (!match) return getDefaultAnalysis();
         const parsed = JSON.parse(match[0]);
-        if (parsed.relationship_assessment && parsed.important_facts) {
-            return parsed;
-        }
+        if (parsed.relationship_assessment && parsed.important_facts) return parsed;
         return getDefaultAnalysis();
     } catch {
         return getDefaultAnalysis();
     }
 }
 
-/**
- * Phân tích mặc định khi lỗi
- */
 function getDefaultAnalysis() {
     return {
-        relationship_assessment: {
-            level: 'bình_thường',
-            explanation: 'Chưa đủ dữ liệu',
-            suggestion: 'Tiếp tục trò chuyện'
-        },
+        relationship_assessment: { level: 'bình_thường', explanation: 'Chưa đủ dữ liệu', suggestion: 'Tiếp tục trò chuyện' },
         important_facts: ['Chưa có sự kiện nổi bật'],
-        tone_suggestion: {
-            style: 'lịch_sự',
-            description: 'Giọng điệu thân thiện',
-            example_phrases: ['Chào anh', 'Cảm ơn']
-        },
-        conversation_strategy: {
-            topics_to_encourage: ['Vườn tược', 'Cuộc sống'],
-            topics_to_avoid: ['Chủ đề nhạy cảm'],
-            strategy: 'Tạo không khí thoải mái'
-        },
-        memory_highlights: {
-            most_memorable_moments: ['Lần đầu gặp'],
-            recent_impact: 'Chưa có tác động lớn'
-        }
+        tone_suggestion: { style: 'lịch_sự', description: 'Giọng điệu thân thiện', example_phrases: ['Chào anh', 'Cảm ơn'] },
+        conversation_strategy: { topics_to_encourage: ['Vườn tược', 'Cuộc sống'], topics_to_avoid: ['Chủ đề nhạy cảm'], strategy: 'Tạo không khí thoải mái' },
+        memory_highlights: { most_memorable_moments: ['Lần đầu gặp'], recent_impact: 'Chưa có tác động lớn' }
     };
 }
 
-/**
- * Lấy strategy notes từ cache (cho brain.js dùng)
- */
-function getStrategyNotesCache() {
-    return lastStrategyNotes;
-}
+function getStrategyNotesCache() { return lastStrategyNotes; }
+function resetReasoner() { pendingMessages = 0; isAnalyzing = false; lastAnalysisTime = 0; lastStrategyNotes = null; }
 
-/**
- * Reset trạng thái (cho test)
- */
-function resetReasoner() {
-    pendingMessages = 0;
-    isAnalyzing = false;
-    lastAnalysisTime = 0;
-    lastStrategyNotes = null;
-}
-
-module.exports = {
-    notifyNewMessage,
-    getStrategyNotesCache,
-    resetReasoner,
-};
+module.exports = { notifyNewMessage, getStrategyNotesCache, resetReasoner };
