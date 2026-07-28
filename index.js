@@ -645,6 +645,6 @@ process.on('SIGINT', () => {
   process.exit(0)
 })
 
-console.log('🚀 Đang khởi động khoa...')
+console.log('🚀 Đang khởi động khoa aka bot...')
 firebaseModule.initFirebase()
 connect()
