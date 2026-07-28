@@ -79,8 +79,8 @@ const { SocksClient } = require('socks')
 
 // ========== PROXY WISPBYTE ==========
 const PROXY = {
-  host: 'nodeX.wispbyte.com',   // ← thay domain Wispbyte thật của mày
-  port: 13124,                  // ← thay port Wispbyte thật của mày
+  host: '78.154.103.41',   // dùng IP cho chắc
+  port: 13124,
   type: 5
 }
 // ====================================
