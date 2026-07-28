@@ -637,7 +637,7 @@ process.on('uncaughtException', (err) => console.log('🆘 uncaughtException:', 
 process.on('unhandledRejection', (reason) => console.log('🆘 unhandledRejection:', reason))
 process.on('SIGINT', () => {
   shuttingDown = true
-  console.log('\n👋 Ông Tư nghỉ tay, đang tắt...')
+  console.log('\n👋 khoa nghỉ tay, đang tắt...')
   stopAllLoops()
   proactive.stop()
   moodEngine.stopEngine()
