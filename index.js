@@ -79,7 +79,7 @@ const { SocksClient } = require('socks')
 
 // ========== PROXY WISPBYTE ==========
 const PROXY = {
-  host: 'Botmcsividi.wisp.uno',
+  host: '78.154.103.41',
   port: 13124,
   type: 5
 }
