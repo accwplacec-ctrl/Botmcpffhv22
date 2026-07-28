@@ -75,22 +75,45 @@ function countWheatInInventory() {
 
 // ==================== KẾT NỐI VÀO SERVER ====================
 
-function connect() {
-  console.log(`🔄 Kết nối lần ${reconnectAttempts + 1}...`)
-  bot = mineflayer.createBot({
-    host: CONFIG.server.host,
-    port: CONFIG.server.port,
-    username: CONFIG.server.username,
-    version: CONFIG.server.version,
-    auth: CONFIG.server.auth,
-    checkTimeoutInterval: 60000,
-    keepAlive: true,
-  })
+const { SocksClient } = require('socks')
 
-  bot.loadPlugin(pathfinder)
-  registerEvents()
+// ========== PROXY WISPBYTE ==========
+const PROXY = {
+  host: 'nodeX.wispbyte.com',   // ← thay domain Wispbyte thật của mày
+  port: 13124,                  // ← thay port Wispbyte thật của mày
+  type: 5
 }
+// ====================================
 
+function connect() {
+  console.log(`🔄 Kết nối lần ${reconnectAttempts + 1}... (đi qua proxy Wispbyte)`)
+
+  SocksClient.createConnection({
+    proxy: PROXY,
+    command: 'connect',
+    destination: {
+      host: CONFIG.server.host,
+      port: CONFIG.server.port
+    }
+  })
+  .then((info) => {
+    bot = mineflayer.createBot({
+      username: CONFIG.server.username,
+      version: CONFIG.server.version,
+      auth: CONFIG.server.auth,
+      stream: info.socket,          // đi qua proxy
+      checkTimeoutInterval: 60000,
+      keepAlive: true,
+    })
+
+    bot.loadPlugin(pathfinder)
+    registerEvents()
+  })
+  .catch((err) => {
+    console.log('❌ Không kết nối được proxy:', err.message)
+    scheduleReconnect()
+  })
+}
 function registerEvents() {
   bot.once('spawn', onSpawn)
   bot.on('chat', onChat)
