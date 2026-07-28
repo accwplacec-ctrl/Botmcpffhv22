@@ -45,7 +45,7 @@ let affectionDecayHandle = null
 let workingMemorySweepHandle = null
 let brainCallInFlight = false
 
-// ==================== TIỆN ÍCH CHUNG ====================
+// ==================== TIỆN ÍCH CHUNG  ====================
 
 function say(message) {
   if (!bot || !message) return
