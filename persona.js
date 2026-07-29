@@ -301,7 +301,6 @@ Bot: có cả 2, fortune với silk đều sẵn
 /* -------------------- BASE PERSONALITY -------------------- */
 function basePersonality() {
   const me = playerName()
-  const N = ownerName()
 
   return `Bạn LÀ ${me} — một thằng con trai đang chơi Minecraft trên server.
 
@@ -326,20 +325,23 @@ ${buildFewShot()}`
 const RESPONSE_FORMAT_SECTION = `## ĐỊNH DẠNG PHẢN HỒI BẮT BUỘC
 Chỉ trả về DUY NHẤT một JSON object hợp lệ, không thêm chữ nào khác ngoài JSON:
 {
-  "say": string,          // câu chat ngắn (có thể "" nếu im lặng)
+  "is_addressing_me": boolean, // true nếu câu chat hướng về bạn, false nếu người chơi đang nói chuyện với người khác hoặc tự nói đổng
+  "say": string,              // câu chat ngắn (để "" hoặc null nếu is_addressing_me = false)
   "action": "idle|wander|look|emote|rest",
   "remember": string|null,
   "affection_delta": number
-}`
+}
+
+### QUY TẮC PHÂN LOẠI "is_addressing_me":
+1. Đặt "is_addressing_me": false KHI:
+   - Người chơi đang nhắc tên, gọi tên, rủ rê, nói chuyện hoặc trả lời một người chơi KHÁC đang online (kể cả khi họ viết sai tên, viết tắt tên người đó).
+   - Người chơi đang nói đổng một mình, bình luận vu vơ không hướng về bạn.
+   - Khi is_addressing_me = false, hãy đặt "say": "" và "action": "wander".
+
+2. Đặt "is_addressing_me": true KHI:
+   - Người chơi gọi tên/từ khóa của bạn (Khoa, Ông Tư...), hoặc đang hỏi, trả lời, tiếp tục mạch chuyện hướng trực tiếp về phía bạn.`
 
 /* -------------------- BUILD PROMPT -------------------- */
-/**
- * @param {object} memorySummary
- * @param {object} moodState
- * @param {object} workingFlags
- * @param {string} mode - 'chat' | 'proactive' | 'stranger_chat'
- * @param {number} wheatCount
- */
 function buildChatLogSection(chatLog) {
   if (!chatLog) return null
   const { general, boss } = chatLog
@@ -357,18 +359,24 @@ function buildChatLogSection(chatLog) {
   if (boss && boss.length > 0) {
     lines.push('- Chat riêng của chủ gần đây (không tính người lạ):')
     for (const m of boss.slice(-5)) {
-      lines.push(`  + ${m.username}: ${m.text}`)
+      const who = m.username
+      lines.push(`  + ${who}: ${m.text}`)
     }
   }
 
-  if (lines.length === 1) return null // không có gì để hiển thị
+  if (lines.length === 1) return null
   return lines.join('\n')
 }
 
-function buildSystemPrompt(memorySummary, moodState, workingFlags, mode, wheatCount, chatLog) {
+function buildSystemPrompt(memorySummary, moodState, workingFlags, mode, wheatCount, chatLog, onlinePlayers = []) {
   const dominantMood = require('./moodEngine').getDominantMood()
   const N = ownerName()
+  const otherPlayersStr = onlinePlayers.length > 0 ? onlinePlayers.join(', ') : 'Không có ai khác'
+
   const sections = [basePersonality()]
+
+  sections.push(`## DANH SÁCH NGƯỜI CHƠI KHÁC ĐANG ONLINE TRÊN SERVER
+[${otherPlayersStr}]`)
 
   if (mode === 'stranger_chat') {
     sections.push(
