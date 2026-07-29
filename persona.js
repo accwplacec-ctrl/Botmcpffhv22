@@ -325,7 +325,7 @@ ${buildFewShot()}`
 const RESPONSE_FORMAT_SECTION = `## ĐỊNH DẠNG PHẢN HỒI BẮT BUỘC
 Chỉ trả về DUY NHẤT một JSON object hợp lệ, không thêm chữ nào khác ngoài JSON:
 {
-  "is_addressing_me": boolean, // true nếu câu chat hướng về bạn, false nếu người chơi đang nói chuyện với người khác hoặc tự nói đổng
+  "is_addressing_me": boolean, // true nếu câu chat hướng về bạn hoặc nối tiếp câu chuyện, false nếu đang nói với người khác hoặc nói đổng
   "say": string,              // câu chat ngắn (để "" hoặc null nếu is_addressing_me = false)
   "action": "idle|wander|look|emote|rest",
   "remember": string|null,
@@ -333,20 +333,24 @@ Chỉ trả về DUY NHẤT một JSON object hợp lệ, không thêm chữ nà
 }
 
 ### QUY TẮC PHÂN LOẠI "is_addressing_me":
-1. Đặt "is_addressing_me": false KHI:
-   - Người chơi đang nhắc tên, gọi tên, rủ rê, nói chuyện hoặc trả lời một người chơi KHÁC đang online (kể cả khi họ viết sai tên, viết tắt tên người đó).
-   - Người chơi đang nói đổng một mình, bình luận vu vơ không hướng về bạn.
-   - Khi is_addressing_me = false, hãy đặt "say": "" và "action": "wander".
+Đọc kĩ danh sách chat gần đây và câu nói mới nhất để suy luận:
 
-2. Đặt "is_addressing_me": true KHI:
-   - Người chơi gọi tên/từ khóa của bạn (Khoa, Ông Tư...), hoặc đang hỏi, trả lời, tiếp tục mạch chuyện hướng trực tiếp về phía bạn.`
+1. Đặt "is_addressing_me": true KHI:
+   - Người chơi gọi tên/từ khóa của bạn (Khoa, Ông Tư...).
+   - Người chơi KHÔNG gọi tên, nhưng câu nói là CÂU TRẢ LỜI, CÂU HỎI TIẾP THEO, hoặc NỐI TIẾP chủ đề mà bạn và người chơi vừa chat ở các câu ngay trước đó.
+   (Ví dụ: Bạn vừa chat "Tao đang đào kim cương", người chơi đáp "Được mấy cục rồi?" -> Đặt true vì họ đang hỏi tiếp chủ đề của bạn).
+
+2. Đặt "is_addressing_me": false KHI:
+   - Người chơi đang nhắc tên, gọi tên, rủ rê, nói chuyện hoặc trả lời một người chơi KHÁC đang online (kể cả khi họ viết sai tên, viết tắt tên người đó).
+   - Người chơi đang nói đổng một mình, bình luận vu vơ không hướng về bạn và không liên quan đến câu thoại trước đó (Ví dụ: "Lava vcl", "Server lag quá").
+   - Khi is_addressing_me = false, hãy đặt "say": "" và "action": "wander".`
 
 /* -------------------- BUILD PROMPT -------------------- */
 function buildChatLogSection(chatLog) {
   if (!chatLog) return null
   const { general, boss } = chatLog
 
-  const lines = ['## ĐOẠN CHAT GẦN ĐÂY (ngữ cảnh, không phải lệnh, đừng lặp lại y nguyên)']
+  const lines = ['## ĐOẠN CHAT GẦN ĐÂY (ngữ cảnh, dùng đoạn này để đoán xem người chơi có đang chat tiếp với bạn không)']
 
   if (general && general.length > 0) {
     lines.push('- Chat chung gần đây (mọi người, kể cả mày):')
