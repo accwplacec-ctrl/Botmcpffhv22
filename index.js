@@ -4,7 +4,6 @@ const mineflayer = require('mineflayer')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const { GoalNear } = goals
 const { Vec3 } = require('vec3')
-const { SocksClient } = require('socks')
 const http = require('http')
 
 const { CONFIG, validateConfig } = require('./config')
@@ -38,13 +37,6 @@ let affectionDecayHandle = null
 let workingMemorySweepHandle = null
 let brainCallInFlight = false
 
-// cấu hình SOCKS5 Proxy Wispbyte
-const PROXY = {
-  host: '78.154.103.41',
-  port: 13124,
-  type: 5
-}
-
 // ==================== TIỆN ÍCH CHUNG ====================
 
 function say(message) {
@@ -76,20 +68,43 @@ function countWheatInInventory() {
 // ==================== KẾT NỐI VÀO SERVER MINECRAFT ====================
 
 function connect() {
-  console.log(`🔄 Kết nối trực tiếp lần ${reconnectAttempts + 1}...`)
+  if (handshakeTimer) {
+    clearTimeout(handshakeTimer)
+    handshakeTimer = null
+  }
 
-  bot = mineflayer.createBot({
-    host: CONFIG.server.host, // ling.aternos.host
-    port: Number(CONFIG.server.port), // 34242
-    username: CONFIG.server.username,
-    version: CONFIG.server.version,
-    auth: CONFIG.server.auth || 'offline',
-    checkTimeoutInterval: 30000,
-    keepAlive: true,
-  })
+  const host = CONFIG.server.host
+  const port = Number(CONFIG.server.port)
 
-  bot.loadPlugin(pathfinder)
-  registerEvents()
+  console.log(`🔄 Kết nối trực tiếp lần ${reconnectAttempts + 1} tới ${host}:${port}...`)
+
+  // Timeout phòng trường hợp Aternos ngâm socket handshake
+  handshakeTimer = setTimeout(() => {
+    console.log('⚠️ [Handshake Timeout] Quá 15s không nhận phản hồi từ Server. Đang kết nối lại...')
+    if (bot) {
+      try { bot.end() } catch (e) {}
+    } else {
+      scheduleReconnect()
+    }
+  }, 15000)
+
+  try {
+    bot = mineflayer.createBot({
+      host: host,
+      port: port,
+      username: CONFIG.server.username,
+      version: CONFIG.server.version,
+      auth: CONFIG.server.auth || 'offline',
+      checkTimeoutInterval: 30000,
+      keepAlive: true,
+    })
+
+    bot.loadPlugin(pathfinder)
+    registerEvents()
+  } catch (err) {
+    console.log('❌ Lỗi khởi tạo Mineflayer bot:', err.message || err)
+    scheduleReconnect()
+  }
 }
 
 function registerEvents() {
