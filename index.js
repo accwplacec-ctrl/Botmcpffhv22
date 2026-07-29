@@ -16,23 +16,13 @@ const garden = require('./garden')
 const proactive = require('./proactive')
 const chatLog = require('./chatLog')
 
-// HTTP server giả chỉ để giữ port mở cho Render (nếu deploy dạng Web Service).
-// Không ảnh hưởng gì tới logic bot, chỉ để Render không báo "No open ports".
+// HTTP server giả giữ port cho Render
 const http = require('http')
 http
   .createServer((req, res) => res.end('Ông Tư đang làm việc trong vườn.'))
   .listen(process.env.PORT || 3000, () => {
-    console.log(`🌐 HTTP giữ chỗ đang chạy ở port ${process.env.PORT || 3000} (chỉ để Render không cảnh báo port)`)
+    console.log(`🌐 HTTP giữ chỗ đang chạy ở port ${process.env.PORT || 3000}`)
   })
-
-/**
- * index.js
- * ------------------------------------------------------------
- * File chính: khởi tạo bot, đăng ký toàn bộ event, chạy farming
- * loop thật, mood engine, proactive loop, gift logic, và thực thi
- * tập action đầy đủ trả về từ bộ não (Colab).
- * ------------------------------------------------------------
- */
 
 for (const w of validateConfig()) console.log(`⚠️ ${w}`)
 
@@ -44,6 +34,45 @@ let farmingTickHandle = null
 let affectionDecayHandle = null
 let workingMemorySweepHandle = null
 let brainCallInFlight = false
+
+// ==================== QUẢN LÝ ACTIVE SESSION (CỬA SỔ HỘI THOẠI) ====================
+let currentSpeaker = null      // Lưu tên người chơi đang hội thoại với bot
+let sessionTimeoutHandle = null // Handle của setTimeout
+const SESSION_TIMEOUT_MS = 30000 // 30 giây duy trì phiên trò chuyện không cần gõ Trigger
+
+function refreshSession(username) {
+  currentSpeaker = username
+  if (sessionTimeoutHandle) clearTimeout(sessionTimeoutHandle)
+  sessionTimeoutHandle = setTimeout(() => {
+    console.log(`⏳ Phiên trò chuyện với ${currentSpeaker} đã hết hạn (30s). Bot quay lại làm việc.`)
+    currentSpeaker = null
+    sessionTimeoutHandle = null
+  }, SESSION_TIMEOUT_MS)
+}
+
+function clearSession() {
+  currentSpeaker = null
+  if (sessionTimeoutHandle) {
+    clearTimeout(sessionTimeoutHandle)
+    sessionTimeoutHandle = null
+  }
+}
+
+// Kiểm tra xem trong câu nói người chơi có gọi tên một người chơi khác đang online không
+function isTalkingToOtherPlayer(message, currentSpeakerName) {
+  if (!bot || !bot.players) return false
+  const lowerMsg = message.toLowerCase()
+  
+  // Lấy danh sách tên người chơi online (loại trừ bot và người đang hội thoại)
+  const otherPlayers = Object.keys(bot.players).filter(
+    (p) => p !== bot.username && p !== currentSpeakerName
+  )
+
+  return otherPlayers.some((name) => {
+    const pattern = new RegExp(`\\b${escapeRegex(name)}\\b`, 'i')
+    return pattern.test(lowerMsg)
+  })
+}
 
 // ==================== TIỆN ÍCH CHUNG ====================
 
@@ -119,14 +148,12 @@ async function onSpawn() {
   startWorkingMemorySweep()
 
   proactive.start(bot, () => runBrainTurn('proactive', null))
-
-  // Đã tắt lời chào tự động khi vào vườn — bỏ comment dòng dưới nếu muốn bật lại
-  // say(`Ông Tư đã vào vườn rồi đây Vân Thiên ơi.`)
 }
 
 function onEnd(reason) {
   console.log('🔌 Mất kết nối:', reason || '')
   stopAllLoops()
+  clearSession()
   proactive.stop()
   moodEngine.stopEngine()
   bot = null
@@ -155,9 +182,7 @@ function onDeath() {
   let reason = 'không rõ lý do'
   try {
     if (bot.lastDamageSource) reason = String(bot.lastDamageSource)
-  } catch (e) {
-    // bỏ qua, dùng giá trị mặc định
-  }
+  } catch (e) {}
   console.log(`☠️ Ông Tư vừa chết: ${reason}`)
   memory.recordDeath(reason)
 }
@@ -177,26 +202,20 @@ function onPlayerCollect(collector, collected) {
     const lastItem = items[items.length - 1]
     const itemName = lastItem ? lastItem.name : 'không rõ'
 
-    if (itemName === 'wheat') return // wheat tự thu hoạch không tính là quà
+    if (itemName === 'wheat') return
 
     const bonus = memory.bonusAffectionForGift(itemName)
     moodEngine.addHappyOnGiftReceived()
     console.log(`🎁 Nhận được ${itemName} từ Vân Thiên, affection +${bonus}.`)
-  } catch (e) {
-    // bỏ qua lỗi heuristic, không quan trọng
-  }
+  } catch (e) {}
 }
 
-// ==================== SỰ KIỆN: CHAT ====================
+// ==================== SỰ KIỆN: CHAT (ĐÃ SỬA ĐỔI HOÀN CHỈNH) ====================
 
-// Escape ky tu dac biet regex, phong truong hop trigger word tuy chinh qua .env chua ky tu regex
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-// Chỉ trả lời khi tin nhắn có gọi tên/nickname bot như 1 TỪ RIÊNG BIỆT (vd "khoa", "ka") -
-// dùng word boundary \b để tránh khớp nhầm khi trigger word chỉ là 1 phần của từ khác
-// (vd "khoai" chứa chuỗi con "khoa" nhưng KHÔNG được tính là gọi tên bot).
 function hasTriggerWord(message) {
   const lower = (message || '').toLowerCase()
   return CONFIG.triggerWords.some((w) => {
@@ -211,16 +230,32 @@ async function onChat(username, message) {
   console.log(`💬 <${username}> ${message}`)
 
   const isOwner = CONFIG.ownerNames.includes(username)
-  chatLog.addMessage(username, message, isOwner) // general_chat ghi cho mọi người, boss_chat tự lọc chỉ owner
+  chatLog.addMessage(username, message, isOwner)
 
-  if (!hasTriggerWord(message)) return // không gọi tên bot thì chỉ ghi log, không trả lời
+  const isTriggered = hasTriggerWord(message)
+  const isSessionActive = (username === currentSpeaker)
+  const isCallingOther = isTalkingToOtherPlayer(message, username)
 
-  if (isOwner) {
-    memory.pushConversation('owner', message)
-    await runBrainTurn('chat', message)
-  } else {
-    // Người lạ cũng được trả lời, nhưng đi qua nhánh riêng (không đụng affection/facts của chủ)
-    await runBrainTurn('stranger_chat', message, username)
+  // Nếu người chơi trong phiên trò chuyện quay sang gọi người khác -> Ngắt Session lập tức
+  if (isSessionActive && isCallingOther) {
+    console.log(`🗣️ ${username} vừa quay sang nói chuyện với người khác. Ngắt session.`)
+    clearSession()
+    return
+  }
+
+  // ĐIỀU KIỆN ĐỂ BOT TRẢ LỜI:
+  // (1) Có gõ từ khóa Trigger HOẶC Đang trong Session 30s
+  // (2) KHÔNG PHẢI đang nói chuyện với người chơi khác
+  if ((isTriggered || isSessionActive) && !isCallingOther) {
+    // Gia hạn/Kích hoạt Session mới
+    refreshSession(username)
+
+    if (isOwner) {
+      memory.pushConversation('owner', message)
+      await runBrainTurn('chat', message)
+    } else {
+      await runBrainTurn('stranger_chat', message, username)
+    }
   }
 }
 
@@ -289,7 +324,7 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
       memory.pushConversation('ong_tu', response.say)
       chatLog.addMessage('Ông Tư', response.say, false, 'bot')
     }
-    // Affection/facts chỉ áp dụng cho chủ — người lạ chat không ảnh hưởng tới hệ tình cảm của Vân Thiên
+
     if (mode !== 'stranger_chat') {
       if (response.remember) memory.rememberFromBrain(response.remember)
       if (response.affection_delta) memory.updateAffectionFromChat(response.affection_delta)
@@ -345,21 +380,6 @@ async function doWander() {
   if (groundY === null) return
   try {
     await bot.pathfinder.goto(new GoalNear(point.x, groundY, point.z, 1))
-  } catch (e) {
-    // không tới được thì bỏ qua, không quan trọng với wander
-  }
-}
-
-async function doSit() {
-  moodEngine.notifyRestOrIdle()
-  try {
-    bot.pathfinder.setGoal(null)
-    bot.setControlState('sneak', true)
-    setTimeout(() => {
-      try {
-        bot.setControlState('sneak', false)
-      } catch (e) {}
-    }, 4000)
   } catch (e) {}
 }
 
@@ -376,12 +396,6 @@ async function doRest() {
   } catch (e) {}
 }
 
-function doWave() {
-  try {
-    bot.swingArm('right')
-  } catch (e) {}
-}
-
 function doLookOwner() {
   const owner = getOwnerEntity()
   if (!owner || !bot.entity) return
@@ -390,72 +404,21 @@ function doLookOwner() {
   } catch (e) {}
 }
 
-// "look" - Khoa nhìn về phía chủ (hoặc người gần nhất) nếu có, không thì thôi
 function doLook() {
   return doLookOwner()
 }
 
-// "emote" - 1 cử chỉ ngắn (vung tay), thay cho "wave" cũ
 function doEmote() {
   try {
     bot.swingArm('right')
   } catch (e) {}
 }
 
-
-async function doAvoidOwner() {
-  const owner = getOwnerEntity()
-  if (!owner || !bot.entity) return
-  try {
-    const away = bot.entity.position.plus(bot.entity.position.minus(owner.position).normalize())
-    bot.lookAt(away, true)
-  } catch (e) {}
-}
-
-async function doAvoidMonster() {
-  moodEngine.notifyRestOrIdle()
-  const nearest = findNearestHostile()
-  if (!nearest || !bot.entity) return
-
-  try {
-    const away = bot.entity.position.minus(nearest.position).normalize().scale(4)
-    const target = garden.clampToGarden(bot.entity.position.plus(away))
-    const groundY = garden.findGroundY(bot, target.x, target.z)
-    const y = groundY === null ? target.y : groundY
-    await bot.pathfinder.goto(new GoalNear(target.x, y, target.z, 1))
-  } catch (e) {
-    // nếu không pathfind được thì thôi, ưu tiên không crash
-  }
-}
-
-function findNearestHostile() {
-  if (!bot || !bot.entity) return null
-  let nearest = null
-  let nearestDist = Infinity
-  for (const e of Object.values(bot.entities || {})) {
-    if (!e || !e.position) continue
-    const isHostile =
-      e.kind === 'Hostile mobs' ||
-      e.type === 'hostile' ||
-      /zombie|skeleton|creeper|spider|enderman|witch|drowned|husk|phantom/.test((e.name || '').toLowerCase())
-    if (!isHostile) continue
-    const dist = bot.entity.position.distanceTo(e.position)
-    if (dist < nearestDist) {
-      nearestDist = dist
-      nearest = e
-    }
-  }
-  return nearest
-}
-
 // ==================== CANH TÁC THẬT: TILL / PLANT / HARVEST ====================
 
 async function doTill() {
   const hoe = bot.inventory.items().find((i) => /_hoe$/.test(i.name))
-  if (!hoe) {
-    console.log('🌱 Không có cuốc trong túi đồ, bỏ qua till.')
-    return
-  }
+  if (!hoe) return
 
   const grassBlock = bot.findBlock({
     matching: (block) => block.name === 'grass_block' && garden.isInGarden(block.position),
@@ -475,10 +438,7 @@ async function doTill() {
 
 async function doPlant() {
   const seeds = bot.inventory.items().find((i) => i.name === 'wheat_seeds')
-  if (!seeds) {
-    console.log('🌱 Không có hạt giống trong túi đồ, bỏ qua plant.')
-    return
-  }
+  if (!seeds) return
 
   const farmland = bot.findBlock({
     matching: (block) => block.name === 'farmland' && garden.isInGarden(block.position),
@@ -536,10 +496,7 @@ async function maybeAutoDeliverGift() {
 
 async function doDeliverGift() {
   const wheatCount = countWheatInInventory()
-  if (wheatCount <= 0) {
-    console.log('🎁 Không có lúa mì để tặng.')
-    return
-  }
+  if (wheatCount <= 0) return
 
   const dropPoint = CONFIG.giftDropPoint
   try {
@@ -563,10 +520,8 @@ async function doDeliverGift() {
   }
 }
 
-// ==================== VÒNG LẶP CANH TÁC TỰ ĐỘNG (không cần Colab) ====================
+// ==================== VÒNG LẶP CANH TÁC TỰ ĐỘNG ====================
 
-// Chỉ đi lung tung trong khu vực đã nhốt (garden bounds) - không tự đào/cày/trồng gì cả,
-// tránh phá hoại vì Khoa đang bị nhốt trong 1 khu vực kín.
 function startFarmingLoop() {
   if (farmingTickHandle) clearInterval(farmingTickHandle)
   farmingTickHandle = setInterval(async () => {
@@ -582,16 +537,14 @@ function startFarmingLoop() {
   }, CONFIG.farming.tickIntervalMs)
 }
 
-// ==================== AFFECTION: GIẢM DẦN THEO GIỜ ====================
+// ==================== AFFECTION DECAY & WORKING MEMORY ====================
 
 function startAffectionDecayLoop() {
   if (affectionDecayHandle) clearInterval(affectionDecayHandle)
   affectionDecayHandle = setInterval(() => {
     memory.decayAffection()
-  }, 60 * 60 * 1000) // mỗi giờ
+  }, 60 * 60 * 1000)
 }
-
-// ==================== WORKING MEMORY: DỌN DẸP ĐỊNH KỲ ====================
 
 function startWorkingMemorySweep() {
   if (workingMemorySweepHandle) clearInterval(workingMemorySweepHandle)
@@ -608,6 +561,7 @@ process.on('SIGINT', () => {
   shuttingDown = true
   console.log('\n👋 Ông Tư nghỉ tay, đang tắt...')
   stopAllLoops()
+  clearSession()
   proactive.stop()
   moodEngine.stopEngine()
   if (bot) bot.end()
