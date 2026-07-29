@@ -259,7 +259,14 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
     }
     const userPrompt = promptParts.join('\n')
 
-    const systemPrompt = persona.buildSystemPrompt(memorySummary, moodState, workingFlags, mode, wheatCount)
+    const systemPrompt = persona.buildSystemPrompt(
+      memorySummary,
+      moodState,
+      workingFlags,
+      mode,
+      wheatCount,
+      chatLog.getRecentForPrompt()
+    )
 
     const emotionalState = {
       affection: memorySummary.affection,
