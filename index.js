@@ -128,6 +128,31 @@ function registerEvents() {
   bot.on('death', onDeath)
   bot.on('blockUpdate', onBlockUpdate)
   bot.on('playerCollect', onPlayerCollect)
+
+  // Hứng toàn bộ tin nhắn hệ thống, chat server, thông báo login/register
+  bot.on('message', (jsonMsg) => {
+    try {
+      const rawText = jsonMsg.toString().trim()
+      if (!rawText) return
+      console.log('📩 [Server Message]:', rawText)
+
+      // Tự động nhận diện nếu server yêu cầu đăng nhập (/login hoặc /register)
+      if (/^\/login|đăng nhập|dang nhap|login <password>/i.test(rawText)) {
+        console.log('🔑 Phát hiện server yêu cầu đăng nhập...')
+        if (CONFIG.server.password) {
+          bot.chat(`/login ${CONFIG.server.password}`)
+        }
+      } else if (/^\/register|đăng ký|dang ky|register <password>/i.test(rawText)) {
+        console.log('🔑 Phát hiện server yêu cầu đăng ký...')
+        if (CONFIG.server.password) {
+          bot.chat(`/register ${CONFIG.server.password} ${CONFIG.server.password}`)
+        }
+      }
+    } catch (e) {
+      console.log('❌ Lỗi xử lý message:', e.message)
+    }
+  })
+
   bot.on('kicked', (reason) => {
     console.log('👢 Bị kick khỏi server:', typeof reason === 'object' ? JSON.stringify(reason) : reason)
   })
