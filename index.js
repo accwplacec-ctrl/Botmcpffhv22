@@ -16,7 +16,7 @@ const garden = require('./garden')
 const proactive = require('./proactive')
 const chatLog = require('./chatLog')
 
-// HTTP server giả giữ port cho Render
+// ==================== HTTP SERVER GIỮ PORT CHO RENDER ====================
 const http = require('http')
 http
   .createServer((req, res) => res.end('Ông Tư đang làm việc trong vườn.'))
@@ -51,6 +51,9 @@ function refreshSession(username) {
 }
 
 function clearSession() {
+  if (currentSpeaker) {
+    console.log(`🔇 Đóng session trò chuyện với ${currentSpeaker}.`)
+  }
   currentSpeaker = null
   if (sessionTimeoutHandle) {
     clearTimeout(sessionTimeoutHandle)
@@ -160,7 +163,7 @@ function stopAllLoops() {
   workingMemorySweepHandle = null
 }
 
-// ==================== SỰ KIỆN: CHẾT ====================
+// ==================== SỰ KIỆN: CHẾT & TẶNG ĐỒ ====================
 
 function onDeath() {
   let reason = 'không rõ lý do'
@@ -170,8 +173,6 @@ function onDeath() {
   console.log(`☠️ Ông Tư vừa chết: ${reason}`)
   memory.recordDeath(reason)
 }
-
-// ==================== SỰ KIỆN: CHỦ TẶNG ĐỒ ====================
 
 function onPlayerCollect(collector, collected) {
   try {
@@ -194,7 +195,7 @@ function onPlayerCollect(collector, collected) {
   } catch (e) {}
 }
 
-// ==================== SỰ KIỆN: CHAT ====================
+// ==================== SỰ KIỆN: CHAT & KIỂM TRA TRIGGER / SESSION ====================
 
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -216,11 +217,12 @@ async function onChat(username, message) {
   const isOwner = CONFIG.ownerNames.includes(username)
   chatLog.addMessage(username, message, isOwner)
 
+  // ĐIỀU KIỆN KÍCH HOẠT: Có Trigger Word HOẶC đang trong Session 30s với người này
   const isTriggered = hasTriggerWord(message)
   const isSessionActive = (username === currentSpeaker)
 
-  // Nếu có từ khóa Trigger HOẶC đang trong Session 30s -> Gọi Gemma đọc & quyết định
   if (isTriggered || isSessionActive) {
+    console.log(`🎯 Kích hoạt lượt đọc AI cho ${username} (Triggered: ${isTriggered}, SessionActive: ${isSessionActive})`)
     if (isOwner) {
       memory.pushConversation('owner', message)
       await runBrainTurn('chat', message, username)
@@ -246,7 +248,6 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
     const workingFlags = workingMemory.getActiveFlags()
     const wheatCount = countWheatInInventory()
 
-    // Lấy danh sách tên người chơi online (loại trừ tên bot)
     const onlinePlayers = Object.keys(bot.players || {}).filter((name) => name !== bot.username)
 
     const deathMention = memory.consumeDeathMention()
@@ -268,7 +269,6 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
     }
     const userPrompt = promptParts.join('\n')
 
-    // Truyền onlinePlayers vào buildSystemPrompt
     const systemPrompt = persona.buildSystemPrompt(
       memorySummary,
       moodState,
@@ -296,11 +296,10 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
     const response = await brain.generate(systemPrompt, userPrompt, emotionalState, memoryContext, wheatCount)
 
     // Đánh giá quyết định từ Gemma
-    // Nếu Gemma không trả về is_addressing_me (undefined), mặc định coi là true
     const isAddressingMe = response.is_addressing_me !== false
 
     if (isAddressingMe) {
-      // 1. Người chơi đang nói chuyện với bot -> Kích hoạt / Gia hạn Session 30s
+      // 1. Người chơi đang nói chuyện với bot -> Gia hạn/mở phiên 30s
       if (speakerUsername) {
         refreshSession(speakerUsername)
       }
@@ -322,8 +321,8 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
       // 4. Thực thi hành động
       await executeAction(response.action)
     } else {
-      // Người chơi quay sang nói với người khác hoặc tự nói đổng
-      console.log(`🤖 Gemma nhận diện ${speakerUsername || 'người chơi'} không nói chuyện với bot. Tắt Session & Im lặng.`)
+      // 5. Gemma nhận diện người chơi nói với người khác -> Ngắt session ngay lập tức
+      console.log(`🤖 Gemma nhận diện ${speakerUsername || 'người chơi'} không hướng về bot. Tắt Session & Im lặng.`)
       clearSession()
       if (response.action) {
         await executeAction(response.action)
@@ -336,7 +335,7 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
   }
 }
 
-// ==================== DISPATCHER: THỰC THI ACTION TỪ COLAB ====================
+// ==================== DISPATCHER: THỰC THI ACTION TỪ AI ====================
 
 async function executeAction(action) {
   if (!bot) return
@@ -352,6 +351,14 @@ async function executeAction(action) {
         return doEmote()
       case 'rest':
         return doRest()
+      case 'till':
+        return doTill()
+      case 'plant':
+        return doPlant()
+      case 'harvest':
+        return doHarvest()
+      case 'deliver_gift':
+        return doDeliverGift()
       default:
         console.log(`❓ Action không xác định: ${action}`)
         return doIdle()
@@ -361,7 +368,7 @@ async function executeAction(action) {
   }
 }
 
-// ==================== CÁC HÀNH ĐỘNG ĐƠN LẺ ====================
+// ==================== CÁC HÀNH ĐỘNG DI CHUYỂN & NGHỈ NGƠI ====================
 
 function doIdle() {
   try {
