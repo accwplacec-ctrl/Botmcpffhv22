@@ -76,58 +76,20 @@ function countWheatInInventory() {
 // ==================== KẾT NỐI VÀO SERVER MINECRAFT ====================
 
 function connect() {
-  if (handshakeTimer) {
-    clearTimeout(handshakeTimer)
-    handshakeTimer = null
-  }
+  console.log(`🔄 Kết nối trực tiếp lần ${reconnectAttempts + 1}...`)
 
-  const targetHost = CONFIG.server.host
-  const targetPort = Number(CONFIG.server.port)
+  bot = mineflayer.createBot({
+    host: CONFIG.server.host, // ling.aternos.host
+    port: Number(CONFIG.server.port), // 34242
+    username: CONFIG.server.username,
+    version: CONFIG.server.version,
+    auth: CONFIG.server.auth || 'offline',
+    checkTimeoutInterval: 30000,
+    keepAlive: true,
+  })
 
-  console.log(`🔄 Kết nối lần ${reconnectAttempts + 1}... (thử kết nối qua Proxy ${PROXY.host}:${PROXY.port} -> ${targetHost}:${targetPort})`)
-
-  const socksOptions = {
-    proxy: PROXY,
-    command: 'connect',
-    destination: {
-      host: targetHost,
-      port: targetPort
-    },
-    timeout: 10000 // Timeout 10s cho kết nối Proxy
-  }
-
-  SocksClient.createConnection(socksOptions)
-    .then((info) => {
-      console.log('✅ Đã bắt tay (handshake) thành công với Proxy! Đang khởi tạo Mineflayer bot...')
-
-      info.socket.on('error', (err) => console.log('❌ [Socket Error]:', err.message || err))
-      info.socket.on('close', (hadError) => console.log(`🔌 [Socket Closed] Had error: ${hadError}`))
-
-      // Đặt timeout 15s cho Mineflayer Handshake với Minecraft Server
-      handshakeTimer = setTimeout(() => {
-        console.log('⚠️ [Handshake Timeout] Quá 15s Mineflayer không nhận phản hồi từ Server. Hủy socket để thử lại...')
-        try {
-          info.socket.destroy()
-        } catch (e) {}
-        scheduleReconnect()
-      }, 15000)
-
-      bot = mineflayer.createBot({
-        username: CONFIG.server.username,
-        version: CONFIG.server.version,
-        auth: CONFIG.server.auth || 'offline',
-        stream: info.socket,
-        checkTimeoutInterval: 30000,
-        keepAlive: true,
-      })
-
-      bot.loadPlugin(pathfinder)
-      registerEvents()
-    })
-    .catch((err) => {
-      console.log('❌ Lỗi kết nối Proxy SOCKS5:', err.message || err)
-      scheduleReconnect()
-    })
+  bot.loadPlugin(pathfinder)
+  registerEvents()
 }
 
 function registerEvents() {
