@@ -40,8 +40,8 @@ let brainCallInFlight = false
 
 // cấu hình SOCKS5 Proxy Wispbyte
 const PROXY = {
-  host: '157.254.32.52',
-  port: 10800,
+  host: '163.5.16.85',
+  port: 1080,
   type: 5
 }
 
