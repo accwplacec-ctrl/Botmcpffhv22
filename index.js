@@ -36,7 +36,7 @@ let workingMemorySweepHandle = null
 let brainCallInFlight = false
 
 // ==================== QUẢN LÝ ACTIVE SESSION (CỬA SỔ HỘI THOẠI) ====================
-let currentSpeaker = null      // Lưu tên người chơi đang hội thoại với bot
+let currentSpeaker = null       // Lưu tên người chơi đang hội thoại với bot
 let sessionTimeoutHandle = null // Handle của setTimeout
 const SESSION_TIMEOUT_MS = 30000 // 30 giây duy trì phiên trò chuyện không cần gõ Trigger
 
@@ -56,22 +56,6 @@ function clearSession() {
     clearTimeout(sessionTimeoutHandle)
     sessionTimeoutHandle = null
   }
-}
-
-// Kiểm tra xem trong câu nói người chơi có gọi tên một người chơi khác đang online không
-function isTalkingToOtherPlayer(message, currentSpeakerName) {
-  if (!bot || !bot.players) return false
-  const lowerMsg = message.toLowerCase()
-  
-  // Lấy danh sách tên người chơi online (loại trừ bot và người đang hội thoại)
-  const otherPlayers = Object.keys(bot.players).filter(
-    (p) => p !== bot.username && p !== currentSpeakerName
-  )
-
-  return otherPlayers.some((name) => {
-    const pattern = new RegExp(`\\b${escapeRegex(name)}\\b`, 'i')
-    return pattern.test(lowerMsg)
-  })
 }
 
 // ==================== TIỆN ÍCH CHUNG ====================
@@ -210,7 +194,7 @@ function onPlayerCollect(collector, collected) {
   } catch (e) {}
 }
 
-// ==================== SỰ KIỆN: CHAT (ĐÃ SỬA ĐỔI HOÀN CHỈNH) ====================
+// ==================== SỰ KIỆN: CHAT ====================
 
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -234,25 +218,12 @@ async function onChat(username, message) {
 
   const isTriggered = hasTriggerWord(message)
   const isSessionActive = (username === currentSpeaker)
-  const isCallingOther = isTalkingToOtherPlayer(message, username)
 
-  // Nếu người chơi trong phiên trò chuyện quay sang gọi người khác -> Ngắt Session lập tức
-  if (isSessionActive && isCallingOther) {
-    console.log(`🗣️ ${username} vừa quay sang nói chuyện với người khác. Ngắt session.`)
-    clearSession()
-    return
-  }
-
-  // ĐIỀU KIỆN ĐỂ BOT TRẢ LỜI:
-  // (1) Có gõ từ khóa Trigger HOẶC Đang trong Session 30s
-  // (2) KHÔNG PHẢI đang nói chuyện với người chơi khác
-  if ((isTriggered || isSessionActive) && !isCallingOther) {
-    // Gia hạn/Kích hoạt Session mới
-    refreshSession(username)
-
+  // Nếu có từ khóa Trigger HOẶC đang trong Session 30s -> Gọi Gemma đọc & quyết định
+  if (isTriggered || isSessionActive) {
     if (isOwner) {
       memory.pushConversation('owner', message)
-      await runBrainTurn('chat', message)
+      await runBrainTurn('chat', message, username)
     } else {
       await runBrainTurn('stranger_chat', message, username)
     }
@@ -275,6 +246,9 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
     const workingFlags = workingMemory.getActiveFlags()
     const wheatCount = countWheatInInventory()
 
+    // Lấy danh sách tên người chơi online (loại trừ tên bot)
+    const onlinePlayers = Object.keys(bot.players || {}).filter((name) => name !== bot.username)
+
     const deathMention = memory.consumeDeathMention()
     const promptParts = []
     if (deathMention) {
@@ -294,13 +268,15 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
     }
     const userPrompt = promptParts.join('\n')
 
+    // Truyền onlinePlayers vào buildSystemPrompt
     const systemPrompt = persona.buildSystemPrompt(
       memorySummary,
       moodState,
       workingFlags,
       mode,
       wheatCount,
-      chatLog.getRecentForPrompt()
+      chatLog.getRecentForPrompt(),
+      onlinePlayers
     )
 
     const emotionalState = {
@@ -319,19 +295,40 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
 
     const response = await brain.generate(systemPrompt, userPrompt, emotionalState, memoryContext, wheatCount)
 
-    if (response.say) {
-      say(response.say)
-      memory.pushConversation('ong_tu', response.say)
-      chatLog.addMessage('Ông Tư', response.say, false, 'bot')
-    }
+    // Đánh giá quyết định từ Gemma
+    // Nếu Gemma không trả về is_addressing_me (undefined), mặc định coi là true
+    const isAddressingMe = response.is_addressing_me !== false
 
-    if (mode !== 'stranger_chat') {
-      if (response.remember) memory.rememberFromBrain(response.remember)
-      if (response.affection_delta) memory.updateAffectionFromChat(response.affection_delta)
-      if (mode === 'chat' && response.affection_delta > 0) moodEngine.addHappyOnPositiveChat()
-    }
+    if (isAddressingMe) {
+      // 1. Người chơi đang nói chuyện với bot -> Kích hoạt / Gia hạn Session 30s
+      if (speakerUsername) {
+        refreshSession(speakerUsername)
+      }
 
-    await executeAction(response.action)
+      // 2. Chat câu trả lời
+      if (response.say) {
+        say(response.say)
+        memory.pushConversation('ong_tu', response.say)
+        chatLog.addMessage('Ông Tư', response.say, false, 'bot')
+      }
+
+      // 3. Cập nhật ký ức & tình cảm
+      if (mode !== 'stranger_chat') {
+        if (response.remember) memory.rememberFromBrain(response.remember)
+        if (response.affection_delta) memory.updateAffectionFromChat(response.affection_delta)
+        if (mode === 'chat' && response.affection_delta > 0) moodEngine.addHappyOnPositiveChat()
+      }
+
+      // 4. Thực thi hành động
+      await executeAction(response.action)
+    } else {
+      // Người chơi quay sang nói với người khác hoặc tự nói đổng
+      console.log(`🤖 Gemma nhận diện ${speakerUsername || 'người chơi'} không nói chuyện với bot. Tắt Session & Im lặng.`)
+      clearSession()
+      if (response.action) {
+        await executeAction(response.action)
+      }
+    }
   } catch (e) {
     console.log('❌ Lỗi trong lượt gọi bộ não:', e.message)
   } finally {
