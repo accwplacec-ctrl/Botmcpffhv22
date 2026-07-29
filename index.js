@@ -95,7 +95,6 @@ function registerEvents() {
   bot.once('spawn', onSpawn)
   bot.on('chat', onChat)
   bot.on('death', onDeath)
-  bot.on('blockUpdate', onBlockUpdate)
   bot.on('playerCollect', onPlayerCollect)
   bot.on('kicked', (reason) => console.log('👢 Bị kick khỏi server:', reason))
   bot.on('error', (err) => console.log('❌ Lỗi bot:', err && err.message ? err.message : err))
@@ -163,31 +162,6 @@ function onDeath() {
   memory.recordDeath(reason)
 }
 
-// ==================== SỰ KIỆN: THEO DÕI PHÁ RUỘNG ====================
-// Chỉ tính khi block đổi từ farmland/wheat sang air/dirt VÀ chủ đang đứng sát bên
-// (tương tác trực tiếp), không tính nếu chủ chỉ đi ngang qua.
-
-function onBlockUpdate(oldBlock, newBlock) {
-  try {
-    if (!oldBlock || !newBlock) return
-    const wasFarmish = oldBlock.name === 'farmland' || oldBlock.name === 'wheat'
-    const becameEmpty = newBlock.name === 'air' || newBlock.name === 'dirt'
-    if (!wasFarmish || !becameEmpty) return
-    if (!garden.isInGarden(newBlock.position)) return
-
-    const owner = getOwnerEntity()
-    if (!owner) return
-
-    const distToOwner = owner.position.distanceTo(newBlock.position)
-    if (distToOwner <= 5) {
-      workingMemory.setFlag('ruong_bi_pha', 12 * 60 * 1000)
-      console.log('🌾 Ghi nhận: Vân Thiên vừa phá ruộng gần vị trí của mình.')
-    }
-  } catch (e) {
-    console.log('❌ Lỗi xử lý blockUpdate:', e.message)
-  }
-}
-
 // ==================== SỰ KIỆN: CHỦ TẶNG ĐỒ ====================
 
 function onPlayerCollect(collector, collected) {
@@ -215,10 +189,21 @@ function onPlayerCollect(collector, collected) {
 
 // ==================== SỰ KIỆN: CHAT ====================
 
-// Chỉ trả lời khi tin nhắn có gọi tên/nickname bot (vd "khoa", "ka") - áp dụng cho cả chủ lẫn người lạ
+// Escape ky tu dac biet regex, phong truong hop trigger word tuy chinh qua .env chua ky tu regex
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// Chỉ trả lời khi tin nhắn có gọi tên/nickname bot như 1 TỪ RIÊNG BIỆT (vd "khoa", "ka") -
+// dùng word boundary \b để tránh khớp nhầm khi trigger word chỉ là 1 phần của từ khác
+// (vd "khoai" chứa chuỗi con "khoa" nhưng KHÔNG được tính là gọi tên bot).
 function hasTriggerWord(message) {
   const lower = (message || '').toLowerCase()
-  return CONFIG.triggerWords.some((w) => lower.includes(w))
+  return CONFIG.triggerWords.some((w) => {
+    if (!w) return false
+    const pattern = new RegExp(`\\b${escapeRegex(w)}\\b`, 'i')
+    return pattern.test(lower)
+  })
 }
 
 async function onChat(username, message) {
