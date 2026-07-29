@@ -4,7 +4,7 @@ const mineflayer = require('mineflayer')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const { GoalNear } = goals
 const { Vec3 } = require('vec3')
-const { SocksClient } = require('socks')
+
 const http = require('http')
 
 const { CONFIG, validateConfig } = require('./config')
