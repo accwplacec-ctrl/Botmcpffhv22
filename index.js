@@ -82,53 +82,29 @@ function connect() {
     handshakeTimer = null
   }
 
-  const targetHost = CONFIG.server.host
-  const targetPort = Number(CONFIG.server.port)
+  console.log(`🔄 Kết nối lần ${reconnectAttempts + 1}... (qua TCP Proxy 78.154.103.34:14589)`)
 
-  console.log(`🔄 Kết nối lần ${reconnectAttempts + 1}... (thử kết nối qua Proxy ${PROXY.host}:${PROXY.port} -> ${targetHost}:${targetPort})`)
+  bot = mineflayer.createBot({
+    host: '78.154.103.34',     // IP Wispbyte
+    port: 14589,               // Port proxy
+    username: CONFIG.server.username,
+    version: CONFIG.server.version,
+    auth: CONFIG.server.auth || 'offline',
+    checkTimeoutInterval: 60000,
+    keepAlive: true,
+  })
 
-  const socksOptions = {
-    proxy: PROXY,
-    command: 'connect',
-    destination: {
-      host: targetHost,
-      port: targetPort
-    },
-    timeout: 20000 // Timeout 10s cho kết nối Proxy
-  }
+  bot.loadPlugin(pathfinder)
+  registerEvents()
 
-  SocksClient.createConnection(socksOptions)
-    .then((info) => {
-      console.log('✅ Đã bắt tay (handshake) thành công với Proxy! Đang khởi tạo Mineflayer bot...')
-
-      info.socket.on('error', (err) => console.log('❌ [Socket Error]:', err.message || err))
-      info.socket.on('close', (hadError) => console.log(`🔌 [Socket Closed] Had error: ${hadError}`))
-
-      // Đặt timeout 15s cho Mineflayer Handshake với Minecraft Server
-      handshakeTimer = setTimeout(() => {
-        console.log('⚠️ [Handshake Timeout] Quá 15s Mineflayer không nhận phản hồi từ Server. Hủy socket để thử lại...')
-        try {
-          info.socket.destroy()
-        } catch (e) {}
-        scheduleReconnect()
-      }, 55000)
-
-      bot = mineflayer.createBot({
-        username: CONFIG.server.username,
-        version: CONFIG.server.version,
-        auth: CONFIG.server.auth || 'offline',
-        stream: info.socket,
-        checkTimeoutInterval: 30000,
-        keepAlive: true,
-      })
-
-      bot.loadPlugin(pathfinder)
-      registerEvents()
-    })
-    .catch((err) => {
-      console.log('❌ Lỗi kết nối Proxy SOCKS5:', err.message || err)
-      scheduleReconnect()
-    })
+  // Timeout 60 giây cho handshake
+  handshakeTimer = setTimeout(() => {
+    console.log('⚠️ [Handshake Timeout] Quá 60s không nhận phản hồi từ Server. Hủy...')
+    try {
+      if (bot) bot.end()
+    } catch (e) {}
+    scheduleReconnect()
+  }, 60000)
 }
 
 function registerEvents() {
