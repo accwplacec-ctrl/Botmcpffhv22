@@ -25,20 +25,12 @@ http
     console.log(`🌐 HTTP giữ chỗ đang chạy ở port ${process.env.PORT || 3000}`)
   })
 
-/**
- * index.js
- * ------------------------------------------------------------
- * File chính: khởi tạo bot, đăng ký toàn bộ event, chạy farming
- * loop thật, mood engine, proactive loop, gift logic, và thực thi
- * tập action đầy đủ trả về từ bộ não (Colab).
- * ------------------------------------------------------------
- */
-
 for (const w of validateConfig()) console.log(`⚠️ ${w}`)
 
 let bot = null
 let reconnectAttempts = 0
 let shuttingDown = false
+let handshakeTimer = null
 
 let farmingTimeoutHandle = null
 let affectionDecayHandle = null
@@ -86,6 +78,8 @@ const PROXY = {
 function connect() {
   console.log(`🔄 Kết nối lần ${reconnectAttempts + 1}... (thử kết nối qua Proxy ${PROXY.host}:${PROXY.port})`)
 
+  if (handshakeTimer) clearTimeout(handshakeTimer)
+
   const socksOptions = {
     proxy: PROXY,
     command: 'connect',
@@ -93,23 +87,30 @@ function connect() {
       host: CONFIG.server.host,
       port: Number(CONFIG.server.port)
     },
-    timeout: 10000 // Timeout 10 giây cho Proxy
+    timeout: 10000 // Timeout Proxy Handshake
   }
 
   SocksClient.createConnection(socksOptions)
     .then((info) => {
       console.log('✅ Đã bắt tay (handshake) thành công với Proxy! Đang khởi tạo Mineflayer bot...')
 
-      // In log nếu socket gặp sự cố truyền tải dữ liệu
+      // In log chi tiết Socket
       info.socket.on('error', (err) => console.log('❌ [Socket Error]:', err.message || err))
       info.socket.on('close', (hadError) => console.log(`🔌 [Socket Closed] Had error: ${hadError}`))
+
+      // Đặt timeout 15 giây cho Mineflayer Handshake. Nếu quá 15s không Spawn/Lỗi -> Hủy socket làm lại
+      handshakeTimer = setTimeout(() => {
+        console.log('⚠️ [Handshake Timeout] Quá 15s Mineflayer không phản hồi từ Server. Đang hủy kết nối để thử lại...')
+        info.socket.destroy()
+        scheduleReconnect()
+      }, 15000)
 
       bot = mineflayer.createBot({
         username: CONFIG.server.username,
         version: CONFIG.server.version,
         auth: CONFIG.server.auth || 'offline',
         stream: info.socket,          // đi qua proxy socket
-        checkTimeoutInterval: 60000,
+        checkTimeoutInterval: 30000,
         keepAlive: true,
       })
 
@@ -117,7 +118,7 @@ function connect() {
       registerEvents()
     })
     .catch((err) => {
-      console.log('❌ Lỗi kết nối Proxy SOCKS5 (Timeout/Offline):', err.message || err)
+      console.log('❌ Lỗi kết nối Proxy SOCKS5:', err.message || err)
       scheduleReconnect()
     })
 }
@@ -136,7 +137,7 @@ function registerEvents() {
       if (!rawText) return
       console.log('📩 [Server Message]:', rawText)
 
-      // Tự động nhận diện nếu server yêu cầu đăng nhập (/login hoặc /register)
+      // Tự động nhận diện nếu server yêu cầu đăng nhập
       if (/^\/login|đăng nhập|dang nhap|login <password>/i.test(rawText)) {
         console.log('🔑 Phát hiện server yêu cầu đăng nhập...')
         if (CONFIG.server.password) {
@@ -161,10 +162,15 @@ function registerEvents() {
 }
 
 async function onSpawn() {
+  // Xóa timer timeout handshake vì đã spawn thành công
+  if (handshakeTimer) {
+    clearTimeout(handshakeTimer)
+    handshakeTimer = null
+  }
+
   console.log('✅ Ông Tư đã vào vườn tại vị trí:', bot.entity.position)
   reconnectAttempts = 0
 
-  // Dọn dẹp các loop cũ phòng trường hợp respawn/chuyển world
   stopAllLoops()
   proactive.stop()
 
@@ -185,6 +191,10 @@ async function onSpawn() {
 }
 
 function onEnd(reason) {
+  if (handshakeTimer) {
+    clearTimeout(handshakeTimer)
+    handshakeTimer = null
+  }
   console.log('🔌 Mất kết nối server:', reason || '')
   stopAllLoops()
   proactive.stop()
@@ -194,6 +204,10 @@ function onEnd(reason) {
 }
 
 function scheduleReconnect() {
+  if (handshakeTimer) {
+    clearTimeout(handshakeTimer)
+    handshakeTimer = null
+  }
   const delay = Math.min(5000 * Math.pow(1.5, reconnectAttempts), 120000)
   reconnectAttempts++
   console.log(`⏳ Thử kết nối lại sau ${Math.round(delay / 1000)}s (lần ${reconnectAttempts})...`)
