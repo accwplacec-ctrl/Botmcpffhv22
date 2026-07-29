@@ -94,7 +94,7 @@ function connect() {
       host: targetHost,
       port: targetPort
     },
-    timeout: 10000 // Timeout 10s cho kết nối Proxy
+    timeout: 20000 // Timeout 10s cho kết nối Proxy
   }
 
   SocksClient.createConnection(socksOptions)
@@ -111,7 +111,7 @@ function connect() {
           info.socket.destroy()
         } catch (e) {}
         scheduleReconnect()
-      }, 15000)
+      }, 35000)
 
       bot = mineflayer.createBot({
         username: CONFIG.server.username,
