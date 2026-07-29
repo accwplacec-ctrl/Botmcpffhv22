@@ -40,11 +40,11 @@ let brainCallInFlight = false
 
 // cấu hình SOCKS5 Proxy Wispbyte
 const PROXY = {
-  host: '78.154.103.34',   // SERVER ADDRESS
-  port: 14589,             // SERVER PORT
-  type: 5,                 // SOCKS5
-  userId: 'admin',         // phải giống PROXY_USER
-  password: 'mat_khau_sieu_manh' // phải giống PROXY_PASS
+  host: '78.154.103.34',
+  port: 14589,
+  type: 5,
+  userId: 'admin',
+  password: 'strongpassword123'   // ← phải giống hệt bên proxy
 }
 // ==================== TIỆN ÍCH CHUNG ====================
 
