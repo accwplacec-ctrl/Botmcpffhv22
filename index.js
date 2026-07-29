@@ -4,6 +4,7 @@ const mineflayer = require('mineflayer')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const { GoalNear } = goals
 const { Vec3 } = require('vec3')
+const { SocksClient } = require('socks')
 
 const { CONFIG, validateConfig } = require('./config')
 const firebaseModule = require('./firebase')
@@ -16,13 +17,12 @@ const garden = require('./garden')
 const proactive = require('./proactive')
 const chatLog = require('./chatLog')
 
-// HTTP server giả chỉ để giữ port mở cho Render (nếu deploy dạng Web Service).
-// Không ảnh hưởng gì tới logic bot, chỉ để Render không báo "No open ports".
+// HTTP server giữ port mở trên Render
 const http = require('http')
 http
   .createServer((req, res) => res.end('Ông Tư đang làm việc trong vườn.'))
   .listen(process.env.PORT || 3000, () => {
-    console.log(`🌐 HTTP giữ chỗ đang chạy ở port ${process.env.PORT || 3000} (chỉ để Render không cảnh báo port)`)
+    console.log(`🌐 HTTP giữ chỗ đang chạy ở port ${process.env.PORT || 3000}`)
   })
 
 /**
@@ -40,12 +40,12 @@ let bot = null
 let reconnectAttempts = 0
 let shuttingDown = false
 
-let farmingTickHandle = null
+let farmingTimeoutHandle = null
 let affectionDecayHandle = null
 let workingMemorySweepHandle = null
 let brainCallInFlight = false
 
-// ==================== TIỆN ÍCH CHUNG  ====================
+// ==================== TIỆN ÍCH CHUNG ====================
 
 function say(message) {
   if (!bot || !message) return
@@ -66,7 +66,7 @@ function getOwnerEntity() {
 }
 
 function countWheatInInventory() {
-  if (!bot) return 0
+  if (!bot || !bot.inventory) return 0
   return bot.inventory
     .items()
     .filter((i) => i.name === 'wheat')
@@ -74,8 +74,6 @@ function countWheatInInventory() {
 }
 
 // ==================== KẾT NỐI VÀO SERVER ====================
-
-const { SocksClient } = require('socks')
 
 // ========== PROXY WISPBYTE ==========
 const PROXY = {
@@ -86,48 +84,64 @@ const PROXY = {
 // ====================================
 
 function connect() {
-  console.log(`🔄 Kết nối lần ${reconnectAttempts + 1}... (đi qua proxy Wispbyte)`)
+  console.log(`🔄 Kết nối lần ${reconnectAttempts + 1}... (thử kết nối qua Proxy ${PROXY.host}:${PROXY.port})`)
 
-  SocksClient.createConnection({
+  const socksOptions = {
     proxy: PROXY,
     command: 'connect',
     destination: {
       host: CONFIG.server.host,
-      port: CONFIG.server.port
-    }
-  })
-  .then((info) => {
-    bot = mineflayer.createBot({
-      username: CONFIG.server.username,
-      version: CONFIG.server.version,
-      auth: CONFIG.server.auth,
-      stream: info.socket,          // đi qua proxy
-      checkTimeoutInterval: 60000,
-      keepAlive: true,
-    })
+      port: Number(CONFIG.server.port)
+    },
+    timeout: 10000 // Timeout 10 giây cho Proxy
+  }
 
-    bot.loadPlugin(pathfinder)
-    registerEvents()
-  })
-  .catch((err) => {
-    console.log('❌ Không kết nối được proxy:', err.message)
-    scheduleReconnect()
-  })
+  SocksClient.createConnection(socksOptions)
+    .then((info) => {
+      console.log('✅ Đã bắt tay (handshake) thành công với Proxy! Đang khởi tạo Mineflayer bot...')
+
+      // In log nếu socket gặp sự cố truyền tải dữ liệu
+      info.socket.on('error', (err) => console.log('❌ [Socket Error]:', err.message || err))
+      info.socket.on('close', (hadError) => console.log(`🔌 [Socket Closed] Had error: ${hadError}`))
+
+      bot = mineflayer.createBot({
+        username: CONFIG.server.username,
+        version: CONFIG.server.version,
+        auth: CONFIG.server.auth || 'offline',
+        stream: info.socket,          // đi qua proxy socket
+        checkTimeoutInterval: 60000,
+        keepAlive: true,
+      })
+
+      bot.loadPlugin(pathfinder)
+      registerEvents()
+    })
+    .catch((err) => {
+      console.log('❌ Lỗi kết nối Proxy SOCKS5 (Timeout/Offline):', err.message || err)
+      scheduleReconnect()
+    })
 }
+
 function registerEvents() {
   bot.once('spawn', onSpawn)
   bot.on('chat', onChat)
   bot.on('death', onDeath)
   bot.on('blockUpdate', onBlockUpdate)
   bot.on('playerCollect', onPlayerCollect)
-  bot.on('kicked', (reason) => console.log('👢 Bị kick khỏi server:', reason))
-  bot.on('error', (err) => console.log('❌ Lỗi bot:', err && err.message ? err.message : err))
+  bot.on('kicked', (reason) => {
+    console.log('👢 Bị kick khỏi server:', typeof reason === 'object' ? JSON.stringify(reason) : reason)
+  })
+  bot.on('error', (err) => console.log('❌ Lỗi Mineflayer bot:', err && err.message ? err.message : err))
   bot.on('end', onEnd)
 }
 
 async function onSpawn() {
-  console.log('✅ Ông Tư đã vào vườn tại', bot.entity.position)
+  console.log('✅ Ông Tư đã vào vườn tại vị trí:', bot.entity.position)
   reconnectAttempts = 0
+
+  // Dọn dẹp các loop cũ phòng trường hợp respawn/chuyển world
+  stopAllLoops()
+  proactive.stop()
 
   const mcData = require('minecraft-data')(bot.version)
   const movements = new Movements(bot, mcData)
@@ -143,13 +157,10 @@ async function onSpawn() {
   startWorkingMemorySweep()
 
   proactive.start(bot, () => runBrainTurn('proactive', null))
-
-  // Đã tắt lời chào tự động khi vào vườn — bỏ comment dòng dưới nếu muốn bật lại
-  // say(`Ông Tư đã vào vườn rồi đây Vân Thiên ơi.`)
 }
 
 function onEnd(reason) {
-  console.log('🔌 Mất kết nối:', reason || '')
+  console.log('🔌 Mất kết nối server:', reason || '')
   stopAllLoops()
   proactive.stop()
   moodEngine.stopEngine()
@@ -160,15 +171,15 @@ function onEnd(reason) {
 function scheduleReconnect() {
   const delay = Math.min(5000 * Math.pow(1.5, reconnectAttempts), 120000)
   reconnectAttempts++
-  console.log(`⏳ Kết nối lại sau ${Math.round(delay / 1000)}s (lần ${reconnectAttempts})...`)
+  console.log(`⏳ Thử kết nối lại sau ${Math.round(delay / 1000)}s (lần ${reconnectAttempts})...`)
   setTimeout(connect, delay)
 }
 
 function stopAllLoops() {
-  if (farmingTickHandle) clearInterval(farmingTickHandle)
+  if (farmingTimeoutHandle) clearTimeout(farmingTimeoutHandle)
   if (affectionDecayHandle) clearInterval(affectionDecayHandle)
   if (workingMemorySweepHandle) clearInterval(workingMemorySweepHandle)
-  farmingTickHandle = null
+  farmingTimeoutHandle = null
   affectionDecayHandle = null
   workingMemorySweepHandle = null
 }
@@ -179,16 +190,12 @@ function onDeath() {
   let reason = 'không rõ lý do'
   try {
     if (bot.lastDamageSource) reason = String(bot.lastDamageSource)
-  } catch (e) {
-    // bỏ qua, dùng giá trị mặc định
-  }
+  } catch (e) {}
   console.log(`☠️ Ông Tư vừa chết: ${reason}`)
   memory.recordDeath(reason)
 }
 
 // ==================== SỰ KIỆN: THEO DÕI PHÁ RUỘNG ====================
-// Chỉ tính khi block đổi từ farmland/wheat sang air/dirt VÀ chủ đang đứng sát bên
-// (tương tác trực tiếp), không tính nếu chủ chỉ đi ngang qua.
 
 function onBlockUpdate(oldBlock, newBlock) {
   try {
@@ -202,7 +209,7 @@ function onBlockUpdate(oldBlock, newBlock) {
     if (!owner) return
 
     const distToOwner = owner.position.distanceTo(newBlock.position)
-    if (distToOwner <= 5) {
+    if (distToOwner <= 6) {
       workingMemory.setFlag('ruong_bi_pha', 12 * 60 * 1000)
       console.log('🌾 Ghi nhận: Vân Thiên vừa phá ruộng gần vị trí của mình.')
     }
@@ -226,19 +233,16 @@ function onPlayerCollect(collector, collected) {
     const lastItem = items[items.length - 1]
     const itemName = lastItem ? lastItem.name : 'không rõ'
 
-    if (itemName === 'wheat') return // wheat tự thu hoạch không tính là quà
+    if (itemName === 'wheat') return 
 
     const bonus = memory.bonusAffectionForGift(itemName)
     moodEngine.addHappyOnGiftReceived()
     console.log(`🎁 Nhận được ${itemName} từ Vân Thiên, affection +${bonus}.`)
-  } catch (e) {
-    // bỏ qua lỗi heuristic, không quan trọng
-  }
+  } catch (e) {}
 }
 
 // ==================== SỰ KIỆN: CHAT ====================
 
-// Chỉ trả lời khi tin nhắn có gọi tên/nickname bot (vd "khoa", "ka") - áp dụng cho cả chủ lẫn người lạ
 function hasTriggerWord(message) {
   const lower = (message || '').toLowerCase()
   return CONFIG.triggerWords.some((w) => lower.includes(w))
@@ -249,15 +253,14 @@ async function onChat(username, message) {
   console.log(`💬 <${username}> ${message}`)
 
   const isOwner = CONFIG.ownerNames.includes(username)
-  chatLog.addMessage(username, message, isOwner) // general_chat ghi cho mọi người, boss_chat tự lọc chỉ owner
+  chatLog.addMessage(username, message, isOwner)
 
-  if (!hasTriggerWord(message)) return // không gọi tên bot thì chỉ ghi log, không trả lời
+  if (!hasTriggerWord(message)) return
 
   if (isOwner) {
     memory.pushConversation('owner', message)
     await runBrainTurn('chat', message)
   } else {
-    // Người lạ cũng được trả lời, nhưng đi qua nhánh riêng (không đụng affection/facts của chủ)
     await runBrainTurn('stranger_chat', message, username)
   }
 }
@@ -320,7 +323,7 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
       memory.pushConversation('ong_tu', response.say)
       chatLog.addMessage('Ông Tư', response.say, false, 'bot')
     }
-    // Affection/facts chỉ áp dụng cho chủ — người lạ chat không ảnh hưởng tới hệ tình cảm của Vân Thiên
+
     if (mode !== 'stranger_chat') {
       if (response.remember) memory.rememberFromBrain(response.remember)
       if (response.affection_delta) memory.updateAffectionFromChat(response.affection_delta)
@@ -351,6 +354,18 @@ async function executeAction(action) {
         return doEmote()
       case 'rest':
         return doRest()
+      case 'sit':
+        return doSit()
+      case 'till':
+        return doTill()
+      case 'plant':
+        return doPlant()
+      case 'harvest':
+        return doHarvest()
+      case 'avoid_owner':
+        return doAvoidOwner()
+      case 'avoid_monster':
+        return doAvoidMonster()
       default:
         console.log(`❓ Action không xác định: ${action}`)
         return doIdle()
@@ -376,9 +391,7 @@ async function doWander() {
   if (groundY === null) return
   try {
     await bot.pathfinder.goto(new GoalNear(point.x, groundY, point.z, 1))
-  } catch (e) {
-    // không tới được thì bỏ qua, không quan trọng với wander
-  }
+  } catch (e) {}
 }
 
 async function doSit() {
@@ -387,9 +400,7 @@ async function doSit() {
     bot.pathfinder.setGoal(null)
     bot.setControlState('sneak', true)
     setTimeout(() => {
-      try {
-        bot.setControlState('sneak', false)
-      } catch (e) {}
+      try { bot.setControlState('sneak', false) } catch (e) {}
     }, 4000)
   } catch (e) {}
 }
@@ -400,16 +411,8 @@ async function doRest() {
     bot.pathfinder.setGoal(null)
     bot.setControlState('sneak', true)
     setTimeout(() => {
-      try {
-        bot.setControlState('sneak', false)
-      } catch (e) {}
+      try { bot.setControlState('sneak', false) } catch (e) {}
     }, 8000)
-  } catch (e) {}
-}
-
-function doWave() {
-  try {
-    bot.swingArm('right')
   } catch (e) {}
 }
 
@@ -421,18 +424,15 @@ function doLookOwner() {
   } catch (e) {}
 }
 
-// "look" - Khoa nhìn về phía chủ (hoặc người gần nhất) nếu có, không thì thôi
 function doLook() {
   return doLookOwner()
 }
 
-// "emote" - 1 cử chỉ ngắn (vung tay), thay cho "wave" cũ
 function doEmote() {
   try {
     bot.swingArm('right')
   } catch (e) {}
 }
-
 
 async function doAvoidOwner() {
   const owner = getOwnerEntity()
@@ -454,9 +454,7 @@ async function doAvoidMonster() {
     const groundY = garden.findGroundY(bot, target.x, target.z)
     const y = groundY === null ? target.y : groundY
     await bot.pathfinder.goto(new GoalNear(target.x, y, target.z, 1))
-  } catch (e) {
-    // nếu không pathfind được thì thôi, ưu tiên không crash
-  }
+  } catch (e) {}
 }
 
 function findNearestHostile() {
@@ -479,7 +477,7 @@ function findNearestHostile() {
   return nearest
 }
 
-// ==================== CANH TÁC THẬT: TILL / PLANT / HARVEST ====================
+// ==================== CANH TÁC THẬT ====================
 
 async function doTill() {
   const hoe = bot.inventory.items().find((i) => /_hoe$/.test(i.name))
@@ -575,16 +573,14 @@ async function doDeliverGift() {
   const dropPoint = CONFIG.giftDropPoint
   try {
     await bot.pathfinder.goto(new GoalNear(dropPoint.x, dropPoint.y, dropPoint.z, 2))
-    const wheatItem = bot.inventory.items().find((i) => i.name === 'wheat')
-    if (!wheatItem) return
-    const total = bot.inventory
-      .items()
-      .filter((i) => i.name === 'wheat')
-      .reduce((sum, i) => sum + i.count, 0)
 
-    await bot.toss(wheatItem.type, null, total)
-    const milestone = memory.addWheatGifted(total)
-    say(`Ta để dành được ${total} bó lúa mì, mang ra đây tặng Vân Thiên đó.`)
+    const wheatItems = bot.inventory.items().filter((i) => i.name === 'wheat')
+    for (const item of wheatItems) {
+      await bot.tossStack(item)
+    }
+
+    const milestone = memory.addWheatGifted(wheatCount)
+    say(`Ta để dành được ${wheatCount} bó lúa mì, mang ra đây tặng Vân Thiên đó.`)
 
     if (milestone) {
       say(`Ấy chà, vậy là ta đã tặng Vân Thiên tròn ${milestone} bó lúa mì rồi đó, con nhớ giữ sức khoẻ mà làm ăn nghen.`)
@@ -594,35 +590,41 @@ async function doDeliverGift() {
   }
 }
 
-// ==================== VÒNG LẶP CANH TÁC TỰ ĐỘNG (không cần Colab) ====================
+// ==================== VÒNG LẶP CANH TÁC TỰ ĐỘNG ====================
 
-// Chỉ đi lung tung trong khu vực đã nhốt (garden bounds) - không tự đào/cày/trồng gì cả,
-// tránh phá hoại vì Khoa đang bị nhốt trong 1 khu vực kín.
 function startFarmingLoop() {
-  if (farmingTickHandle) clearInterval(farmingTickHandle)
-  farmingTickHandle = setInterval(async () => {
+  if (farmingTimeoutHandle) clearTimeout(farmingTimeoutHandle)
+
+  const tick = async () => {
     if (!bot || !bot.entity) return
 
-    const dominant = moodEngine.getDominantMood()
-    if (dominant.type === 'tired') {
-      await doRest()
-      return
+    try {
+      const dominant = moodEngine.getDominantMood()
+      if (dominant.type === 'tired') {
+        await doRest()
+      } else {
+        await doWander()
+      }
+    } catch (e) {
+      console.log('❌ Lỗi farming loop:', e.message)
+    } finally {
+      if (bot) {
+        farmingTimeoutHandle = setTimeout(tick, CONFIG.farming.tickIntervalMs)
+      }
     }
+  }
 
-    return doWander()
-  }, CONFIG.farming.tickIntervalMs)
+  farmingTimeoutHandle = setTimeout(tick, CONFIG.farming.tickIntervalMs)
 }
 
-// ==================== AFFECTION: GIẢM DẦN THEO GIỜ ====================
+// ==================== AFFECTION DECAY & SWEEP ====================
 
 function startAffectionDecayLoop() {
   if (affectionDecayHandle) clearInterval(affectionDecayHandle)
   affectionDecayHandle = setInterval(() => {
     memory.decayAffection()
-  }, 60 * 60 * 1000) // mỗi giờ
+  }, 60 * 60 * 1000)
 }
-
-// ==================== WORKING MEMORY: DỌN DẸP ĐỊNH KỲ ====================
 
 function startWorkingMemorySweep() {
   if (workingMemorySweepHandle) clearInterval(workingMemorySweepHandle)
@@ -637,7 +639,7 @@ process.on('uncaughtException', (err) => console.log('🆘 uncaughtException:', 
 process.on('unhandledRejection', (reason) => console.log('🆘 unhandledRejection:', reason))
 process.on('SIGINT', () => {
   shuttingDown = true
-  console.log('\n👋 khoa nghỉ tay, đang tắt...')
+  console.log('\n👋 Khoa nghỉ tay, đang tắt...')
   stopAllLoops()
   proactive.stop()
   moodEngine.stopEngine()
