@@ -111,7 +111,7 @@ function connect() {
           info.socket.destroy()
         } catch (e) {}
         scheduleReconnect()
-      }, 35000)
+      }, 55000)
 
       bot = mineflayer.createBot({
         username: CONFIG.server.username,
