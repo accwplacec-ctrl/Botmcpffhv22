@@ -17,7 +17,6 @@ const proactive = require('./proactive')
 const chatLog = require('./chatLog')
 
 // --- TÍCH HỢP RAG ---
-// Import module memoryRAG.js (Lưu ý file này phải được viết bằng chuẩn CommonJS / require)
 const memoryRAG = require('./memoryRAG') 
 
 // ==================== HTTP SERVER GIỮ PORT CHO RENDER ====================
@@ -40,7 +39,7 @@ let workingMemorySweepHandle = null
 let brainCallInFlight = false
 
 // ==================== QUẢN LÝ ACTIVE SESSION (CỬA SỔ HỘI THOẠI) ====================
-let currentSpeaker = null       // Lưu tên người chơi đang hội thoại với bot
+let currentSpeaker = null        // Lưu tên người chơi đang hội thoại với bot
 let sessionTimeoutHandle = null // Handle của setTimeout
 const SESSION_TIMEOUT_MS = 30000 // 30 giây duy trì phiên trò chuyện không cần gõ Trigger
 
@@ -67,11 +66,10 @@ function clearSession() {
 
 // ==================== TIỆN ÍCH LỌC CHUỖI & CHAT ====================
 
-// Hàm làm sạch mã màu (§a, §c...) và Prefix rank ([VIP], [Mem]...)
 function cleanMinecraftText(str) {
   if (!str) return ''
   return str
-    .replace(/§[0-9a-fk-or]/gi, '')   // Xóa mã màu/format Minecraft
+    .replace(/§[0-9a-fk-or]/gi, '')    // Xóa mã màu/format Minecraft
     .replace(/^\[.*?\]\s*/g, '')      // Xóa prefix [Thành viên], [VIP] ở đầu
     .trim()
 }
@@ -139,14 +137,7 @@ async function onSpawn() {
   movements.canDig = false
   bot.pathfinder.setMovements(movements)
 
-  // --- TÍCH HỢP RAG ---
-  // Khởi tạo và nạp VectorDB vào RAM lúc Ông Tư vừa vào server
-  try {
-    await memoryRAG.initRAGChain()
-    console.log('📚 Khối lượng kiến thức (RAG) đã được nạp vào não Ông Tư!')
-  } catch (err) {
-    console.log('⚠️ Lỗi nạp RAG (VectorDB):', err.message)
-  }
+  console.log('📚 Trí nhớ Supabase RAG sẵn sàng kết nối!')
 
   await memory.init()
   moodEngine.resetSession()
@@ -236,7 +227,6 @@ function hasTriggerWord(message) {
 async function onChat(username, message) {
   if (!bot) return
 
-  // Làm sạch username và message trước khi xử lý
   const cleanUsername = cleanMinecraftText(username)
   const cleanMsg = cleanMinecraftText(message)
 
@@ -246,7 +236,6 @@ async function onChat(username, message) {
   const isOwner = CONFIG.ownerNames.includes(cleanUsername)
   chatLog.addMessage(cleanUsername, cleanMsg, isOwner)
 
-  // ĐIỀU KIỆN KÍCH HOẠT: Có Trigger Word HOẶC đang trong Session 30s với người này
   const isTriggered = hasTriggerWord(cleanMsg)
   const isSessionActive = cleanUsername === currentSpeaker
 
@@ -279,12 +268,11 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
 
     const onlinePlayers = Object.keys(bot.players || {}).filter((name) => name !== bot.username)
 
-    // --- TÍCH HỢP RAG ---
-    // Gọi memoryRAG để trích xuất ngữ cảnh liên quan (nếu người chơi có chat)
+    // --- TÍCH HỢP RAG (ĐÃ SỬA ĐÚNG TÊN HÀM) ---
     let ragContext = "";
     if (userMessage && (mode === 'chat' || mode === 'stranger_chat')) {
       try {
-        ragContext = await memoryRAG.getRelevantContext(userMessage);
+        ragContext = await memoryRAG.queryMemoryRAG(userMessage);
       } catch (err) {
         console.log('❌ Lỗi lấy RAG Context:', err.message);
       }
@@ -293,10 +281,8 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
     const deathMention = memory.consumeDeathMention()
     const promptParts = []
 
-    // --- TÍCH HỢP RAG --- 
-    // Bơm kiến thức tĩnh vào đầu User Prompt để LLM đọc và xào nấu lại
     if (ragContext) {
-      promptParts.push(`(Hệ thống cung cấp kiến thức nền cho Ông Tư: ${ragContext})`)
+      promptParts.push(ragContext)
     }
 
     if (deathMention) {
@@ -344,33 +330,27 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
 
     const response = await brain.generate(systemPrompt, userPrompt, emotionalState, memoryContext, wheatCount)
 
-    // Đánh giá quyết định từ Gemma / LLM
     const isAddressingMe = response.is_addressing_me !== false
 
     if (isAddressingMe) {
-      // 1. Người chơi đang nói chuyện với bot -> Gia hạn/mở phiên 30s
       if (speakerUsername) {
         refreshSession(speakerUsername)
       }
 
-      // 2. Chat câu trả lời
       if (response.say) {
         say(response.say)
         memory.pushConversation('ong_tu', response.say)
         chatLog.addMessage('Ông Tư', response.say, false, 'bot')
       }
 
-      // 3. Cập nhật ký ức & tình cảm
       if (mode !== 'stranger_chat') {
         if (response.remember) memory.rememberFromBrain(response.remember)
         if (response.affection_delta) memory.updateAffectionFromChat(response.affection_delta)
         if (mode === 'chat' && response.affection_delta > 0) moodEngine.addHappyOnPositiveChat()
       }
 
-      // 4. Thực thi hành động
       await executeAction(response.action)
     } else {
-      // 5. LLM nhận diện người chơi nói với người khác -> Ngắt session ngay lập tức
       console.log(`🤖 LLM nhận diện ${speakerUsername || 'người chơi'} không hướng về bot. Tắt Session & Im lặng.`)
       clearSession()
       if (response.action) {
