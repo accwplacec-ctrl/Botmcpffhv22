@@ -11,7 +11,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@google/genai": "^0.1.1",
+    "@google/genai": "latest",
     "@supabase/supabase-js": "^2.45.0",
     "dotenv": "^16.4.5",
     "minecraft-data": "^3.111.0",
