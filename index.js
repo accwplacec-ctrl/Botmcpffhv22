@@ -17,7 +17,7 @@ const proactive = require('./proactive')
 const chatLog = require('./chatLog')
 
 // --- TÍCH HỢP RAG ---
-const memoryRAG = require('./memoryRAG') 
+const MemoryRAG = require('./memoryRAG')
 
 // ==================== HTTP SERVER GIỮ PORT CHO RENDER ====================
 const http = require('http')
@@ -32,6 +32,8 @@ for (const w of validateConfig()) console.log(`⚠️ ${w}`)
 let bot = null
 let reconnectAttempts = 0
 let shuttingDown = false
+
+let rag = null // Instance RAG cho Supabase
 
 let farmingTickHandle = null
 let affectionDecayHandle = null
@@ -132,18 +134,25 @@ async function onSpawn() {
   console.log('✅ Ông Tư đã vào vườn tại', bot.entity.position)
   reconnectAttempts = 0
 
+  // Khởi tạo RAG với Supabase
+  try {
+    rag = new MemoryRAG()
+    console.log('📚 Trí nhớ Supabase RAG sẵn sàng!')
+  } catch (err) {
+    console.error('❌ Lỗi khởi tạo RAG:', err.message)
+    rag = null
+  }
+
   const mcData = require('minecraft-data')(bot.version)
   const movements = new Movements(bot, mcData)
   movements.canDig = false
   bot.pathfinder.setMovements(movements)
 
-  console.log('📚 Trí nhớ Supabase RAG sẵn sàng kết nối!')
-
   await memory.init()
   moodEngine.resetSession()
   moodEngine.startEngine(bot)
 
-  startFarmingLoop()
+  startFarmingCycle()
   startAffectionDecayLoop()
   startWorkingMemorySweep()
 
@@ -185,6 +194,16 @@ function onDeath() {
   } catch (e) {}
   console.log(`☠️ Ông Tư vừa chết: ${reason}`)
   memory.recordDeath(reason)
+
+  // Lưu sự kiện chết vào RAG
+  if (rag && bot && bot.entity) {
+    rag.addDocument(`[SỰ KIỆN] Bot đã chết tại vị trí (${bot.entity.position.x}, ${bot.entity.position.y}, ${bot.entity.position.z}) do: ${reason}`, {
+      type: 'death',
+      position: bot.entity.position,
+      reason: reason,
+      timestamp: Date.now()
+    }).catch(err => console.error('[RAG] Lỗi lưu sự kiện chết:', err))
+  }
 }
 
 function onPlayerCollect(collector, collected) {
@@ -205,6 +224,16 @@ function onPlayerCollect(collector, collected) {
     const bonus = memory.bonusAffectionForGift(itemName)
     moodEngine.addHappyOnGiftReceived()
     console.log(`🎁 Nhận được ${itemName} từ Vân Thiên, affection +${bonus}.`)
+
+    // Lưu sự kiện nhận quà vào RAG
+    if (rag) {
+      rag.addDocument(`[SỰ KIỆN] Bot đã nhận được ${itemName} từ Vân Thiên, affection +${bonus}`, {
+        type: 'gift_received',
+        item: itemName,
+        bonus: bonus,
+        timestamp: Date.now()
+      }).catch(err => console.error('[RAG] Lỗi lưu sự kiện nhận quà:', err))
+    }
   } catch (e) {}
 }
 
@@ -235,6 +264,16 @@ async function onChat(username, message) {
 
   const isOwner = CONFIG.ownerNames.includes(cleanUsername)
   chatLog.addMessage(cleanUsername, cleanMsg, isOwner)
+
+  // Lưu tin nhắn vào RAG nếu là chủ hoặc tin nhắn dài
+  if (rag && (isOwner || cleanMsg.length > 30)) {
+    rag.addDocument(`${cleanUsername}: ${cleanMsg}`, {
+      username: cleanUsername,
+      timestamp: Date.now(),
+      type: 'chat',
+      isOwner: isOwner
+    }).catch(err => console.error('[RAG] Lỗi lưu tin nhắn chat:', err))
+  }
 
   const isTriggered = hasTriggerWord(cleanMsg)
   const isSessionActive = cleanUsername === currentSpeaker
@@ -268,13 +307,17 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
 
     const onlinePlayers = Object.keys(bot.players || {}).filter((name) => name !== bot.username)
 
-    // --- TÍCH HỢP RAG (ĐÃ SỬA ĐÚNG TÊN HÀM) ---
-    let ragContext = "";
-    if (userMessage && (mode === 'chat' || mode === 'stranger_chat')) {
+    // Lấy RAG context từ Supabase
+    let ragContext = ""
+    if (rag && userMessage && (mode === 'chat' || mode === 'stranger_chat')) {
       try {
-        ragContext = await memoryRAG.queryMemoryRAG(userMessage);
+        const contexts = await rag.getContext(userMessage, 5)
+        if (contexts && contexts.length > 0) {
+          ragContext = contexts.join('\n')
+          console.log(`📚 Đã lấy ${contexts.length} context từ RAG`)
+        }
       } catch (err) {
-        console.log('❌ Lỗi lấy RAG Context:', err.message);
+        console.log('❌ Lỗi lấy RAG Context:', err.message)
       }
     }
 
@@ -282,7 +325,7 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
     const promptParts = []
 
     if (ragContext) {
-      promptParts.push(ragContext)
+      promptParts.push(`[Thông tin liên quan từ trí nhớ dài hạn]:\n${ragContext}`)
     }
 
     if (deathMention) {
@@ -545,6 +588,16 @@ async function doDeliverGift() {
     const milestone = memory.addWheatGifted(total)
     say(`Ta để dành được ${total} bó lúa mì, mang ra đây tặng Vân Thiên đó.`)
 
+    // Lưu sự kiện tặng lúa vào RAG
+    if (rag) {
+      rag.addDocument(`[SỰ KIỆN] Bot đã tặng ${total} lúa mì cho Vân Thiên`, {
+        type: 'deliver_gift',
+        count: total,
+        milestone: milestone || null,
+        timestamp: Date.now()
+      }).catch(err => console.error('[RAG] Lỗi lưu sự kiện tặng lúa:', err))
+    }
+
     if (milestone) {
       say(`Ấy chà, vậy là ta đã tặng Vân Thiên tròn ${milestone} bó lúa mì rồi đó, con nhớ giữ sức khoẻ mà làm ăn nghen.`)
     }
@@ -555,7 +608,7 @@ async function doDeliverGift() {
 
 // ==================== VÒNG LẶP CANH TÁC TỰ ĐỘNG ====================
 
-function startFarmingLoop() {
+function startFarmingCycle() {
   if (farmingTickHandle) clearInterval(farmingTickHandle)
   farmingTickHandle = setInterval(async () => {
     if (!bot || !bot.entity) return
