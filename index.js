@@ -16,6 +16,10 @@ const garden = require('./garden')
 const proactive = require('./proactive')
 const chatLog = require('./chatLog')
 
+// --- TÍCH HỢP RAG ---
+// Import module memoryRAG.js (Lưu ý file này phải được viết bằng chuẩn CommonJS / require)
+const memoryRAG = require('./memoryRAG') 
+
 // ==================== HTTP SERVER GIỮ PORT CHO RENDER ====================
 const http = require('http')
 http
@@ -134,6 +138,15 @@ async function onSpawn() {
   const movements = new Movements(bot, mcData)
   movements.canDig = false
   bot.pathfinder.setMovements(movements)
+
+  // --- TÍCH HỢP RAG ---
+  // Khởi tạo và nạp VectorDB vào RAM lúc Ông Tư vừa vào server
+  try {
+    await memoryRAG.initRAGChain()
+    console.log('📚 Khối lượng kiến thức (RAG) đã được nạp vào não Ông Tư!')
+  } catch (err) {
+    console.log('⚠️ Lỗi nạp RAG (VectorDB):', err.message)
+  }
 
   await memory.init()
   moodEngine.resetSession()
@@ -266,13 +279,32 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
 
     const onlinePlayers = Object.keys(bot.players || {}).filter((name) => name !== bot.username)
 
+    // --- TÍCH HỢP RAG ---
+    // Gọi memoryRAG để trích xuất ngữ cảnh liên quan (nếu người chơi có chat)
+    let ragContext = "";
+    if (userMessage && (mode === 'chat' || mode === 'stranger_chat')) {
+      try {
+        ragContext = await memoryRAG.getRelevantContext(userMessage);
+      } catch (err) {
+        console.log('❌ Lỗi lấy RAG Context:', err.message);
+      }
+    }
+
     const deathMention = memory.consumeDeathMention()
     const promptParts = []
+
+    // --- TÍCH HỢP RAG --- 
+    // Bơm kiến thức tĩnh vào đầu User Prompt để LLM đọc và xào nấu lại
+    if (ragContext) {
+      promptParts.push(`(Hệ thống cung cấp kiến thức nền cho Ông Tư: ${ragContext})`)
+    }
+
     if (deathMention) {
       promptParts.push(
         `(Ghi chú riêng cho lượt này: Ông Tư vừa hồi sinh sau khi chết vì "${deathMention}" — hãy than thở một chút về việc này rồi thôi, không nhắc lại các lần sau.)`
       )
     }
+    
     if (mode === 'proactive') {
       promptParts.push('(Ông Tư đang chủ động bắt chuyện vì Vân Thiên đang ở trong vườn, Vân Thiên chưa nói gì cả.)')
     } else if (mode === 'stranger_chat') {
@@ -283,6 +315,7 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
     } else {
       promptParts.push(`Vân Thiên vừa nói: "${userMessage}"`)
     }
+    
     const userPrompt = promptParts.join('\n')
 
     const systemPrompt = persona.buildSystemPrompt(
@@ -311,7 +344,7 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
 
     const response = await brain.generate(systemPrompt, userPrompt, emotionalState, memoryContext, wheatCount)
 
-    // Đánh giá quyết định từ Gemma
+    // Đánh giá quyết định từ Gemma / LLM
     const isAddressingMe = response.is_addressing_me !== false
 
     if (isAddressingMe) {
@@ -337,8 +370,8 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
       // 4. Thực thi hành động
       await executeAction(response.action)
     } else {
-      // 5. Gemma nhận diện người chơi nói với người khác -> Ngắt session ngay lập tức
-      console.log(`🤖 Gemma nhận diện ${speakerUsername || 'người chơi'} không hướng về bot. Tắt Session & Im lặng.`)
+      // 5. LLM nhận diện người chơi nói với người khác -> Ngắt session ngay lập tức
+      console.log(`🤖 LLM nhận diện ${speakerUsername || 'người chơi'} không hướng về bot. Tắt Session & Im lặng.`)
       clearSession()
       if (response.action) {
         await executeAction(response.action)
