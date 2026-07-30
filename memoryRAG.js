@@ -1,86 +1,88 @@
-'use strict';
-
-require('dotenv').config();
+// memoryRAG.js
 const { createClient } = require('@supabase/supabase-js');
-const { GoogleGenAI } = require('@google/genai');
-
-// Khởi tạo Supabase client
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
-const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
-
-// Khởi tạo Google Gen AI SDK chuẩn mới
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 /**
- * Hàm lưu một đoạn ký ức mới vào Supabase Vector RAG
- * @param {string} content - Nội dung cần nhớ
+ * MemoryRAG – quản lý trí nhớ dài hạn với Supabase
+ * - Lưu các đoạn văn bản (tin nhắn, sự kiện) vào bảng `rag_documents`
+ * - Tìm kiếm bằng full‑text search (có fallback LIKE)
+ * - Hỗ trợ thêm metadata (username, timestamp,...)
  */
-async function saveMemoryRAG(content) {
-  try {
-    if (!supabase || !process.env.GEMINI_API_KEY || !content) return;
-
-    // 1. Tạo embedding cho nội dung bằng mô hình text-embedding-004
-    const embeddingResult = await ai.models.embedContent({
-      model: 'text-embedding-004',
-      contents: content,
-    });
-
-    const embedding = embeddingResult.embedding.values;
-
-    // 2. Insert vào bảng bot_rag_memories
-    const { error } = await supabase
-      .from('bot_rag_memories')
-      .insert([{ content: content, embedding: embedding }]);
-
-    if (error) {
-      console.error('❌ Lỗi khi lưu RAG memory vào Supabase:', error.message);
-    } else {
-      console.log('🧠 Đã ghi nhớ vào Supabase RAG:', content);
+class MemoryRAG {
+  constructor() {
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY in environment');
     }
-  } catch (err) {
-    console.error('❌ Lỗi ngoại lệ khi saveMemoryRAG:', err.message);
+    this.supabase = createClient(supabaseUrl, supabaseKey);
+    this.table = 'rag_documents';
+  }
+
+  /**
+   * Thêm một đoạn văn bản vào bộ nhớ
+   * @param {string} text        - Nội dung cần nhớ
+   * @param {object} metadata    - Thông tin bổ sung (ví dụ: { username, timestamp })
+   */
+  async addDocument(text, metadata = {}) {
+    if (!text || text.trim().length === 0) return;
+    try {
+      const { error } = await this.supabase
+        .from(this.table)
+        .insert({ content: text, metadata });
+      if (error) {
+        console.error('[RAG] Lỗi khi thêm document:', error.message);
+      }
+    } catch (err) {
+      console.error('[RAG] Ngoại lệ khi thêm document:', err);
+    }
+  }
+
+  /**
+   * Tìm kiếm các đoạn văn bản liên quan tới truy vấn
+   * @param {string} query  - Câu hỏi / từ khoá
+   * @param {number} topK   - Số lượng kết quả tối đa (mặc định 5)
+   * @returns {Promise<string[]>} - Mảng các nội dung tìm được
+   */
+  async search(query, topK = 5) {
+    if (!query || query.trim().length === 0) return [];
+
+    try {
+      // Sử dụng full‑text search (cần cột tsvector hoặc dùng hàm có sẵn)
+      // Hàm textSearch của Supabase hỗ trợ sẵn
+      const { data, error } = await this.supabase
+        .from(this.table)
+        .select('content')
+        .textSearch('content', query, { config: 'vietnamese' }) // nếu có cấu hình tiếng Việt
+        .limit(topK);
+
+      if (error) {
+        // Fallback: LIKE đơn giản nếu full‑text bị lỗi (ví dụ chưa tạo index)
+        console.warn('[RAG] textSearch lỗi, chuyển sang LIKE fallback:', error.message);
+        const { data: fallbackData, error: fallbackError } = await this.supabase
+          .from(this.table)
+          .select('content')
+          .ilike('content', `%${query}%`)
+          .limit(topK);
+        if (fallbackError) throw fallbackError;
+        return fallbackData.map(row => row.content);
+      }
+
+      return data.map(row => row.content);
+    } catch (err) {
+      console.error('[RAG] Lỗi tìm kiếm:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Lấy ngữ cảnh (context) cho một câu hỏi
+   * @param {string} query  - Câu hỏi
+   * @param {number} topK   - Số lượng kết quả
+   * @returns {Promise<string[]>} - Mảng nội dung ngữ cảnh
+   */
+  async getContext(query, topK = 5) {
+    return await this.search(query, topK);
   }
 }
 
-/**
- * Hàm truy vấn RAG kết hợp trí nhớ cũ từ Supabase Vector
- * @param {string} userQuery - Câu chat hiện tại của người chơi
- * @returns {Promise<string>} - Trả về chuỗi kiến thức nền để gieo vào prompt
- */
-async function queryMemoryRAG(userQuery) {
-  try {
-    if (!supabase || !process.env.GEMINI_API_KEY) {
-      return '';
-    }
-
-    // 1. Tạo embedding cho câu hỏi của người chơi bằng mô hình text-embedding-004 của Gemini
-    const embeddingResult = await ai.models.embedContent({
-      model: 'text-embedding-004',
-      contents: userQuery,
-    });
-
-    const embedding = embeddingResult.embedding.values;
-
-    // 2. Tìm kiếm các đoạn ký ức/tài liệu tương đồng trong Supabase thông qua hàm RPC match_memories
-    const { data: matches, error } = await supabase.rpc('match_memories', {
-      query_embedding: embedding,
-      match_threshold: 0.5, // Ngưỡng tương đồng
-      match_count: 3,        // Lấy tối đa 3 kết quả phù hợp nhất
-    });
-
-    if (error || !matches || matches.length === 0) {
-      return '';
-    }
-
-    // 3. Tổng hợp lại thành đoạn kiến thức nền để nhét vào prompt của bot
-    const contextText = matches.map((m) => m.content).join('\n- ');
-    return `\n(Hệ thống cung cấp kiến thức nền liên quan:\n- ${contextText})\n`;
-    
-  } catch (err) {
-    console.error('Lỗi khi truy vấn memoryRAG:', err.message);
-    return '';
-  }
-}
-
-module.exports = { saveMemoryRAG, queryMemoryRAG };
+module.exports = MemoryRAG;
