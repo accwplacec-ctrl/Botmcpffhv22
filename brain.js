@@ -70,26 +70,42 @@ function sanitizeResponse(raw) {
 }
 
 /**
- * Lấy RAG context từ Supabase
+ * Lấy RAG context từ Supabase (có debug log chi tiết)
  * @param {string} query - Câu hỏi/tin nhắn của người dùng
  * @param {number} topK - Số lượng context tối đa
  * @returns {Promise<string>} - Chuỗi context đã gộp
  */
 async function fetchRAGContext(query, topK = 5) {
-  if (!query || query.trim().length < 3) return ''
+  // --- DEBUG: Bắt đầu ---
+  console.log(`[RAG-DEBUG] fetchRAGContext được gọi với query: "${query}" (độ dài: ${query?.length || 0})`)
+
+  if (!query || query.trim().length < 3) {
+    console.log('[RAG-DEBUG] ❌ Query quá ngắn (<3 ký tự), bỏ qua RAG')
+    return ''
+  }
 
   const rag = getRagInstance()
-  if (!rag) return ''
+  if (!rag) {
+    console.log('[RAG-DEBUG] ❌ Không có RAG instance, bỏ qua')
+    return ''
+  }
 
+  console.log('[RAG-DEBUG] 🔍 Đang tìm kiếm RAG...')
   try {
     const contexts = await rag.getContext(query, topK)
+    console.log(`[RAG-DEBUG] 📊 Kết quả: tìm thấy ${contexts?.length || 0} context`)
+
     if (contexts && contexts.length > 0) {
       console.log(`📚 RAG: Đã lấy ${contexts.length} context cho query: "${query.slice(0, 50)}..."`)
+      // In ra nội dung đầu tiên để kiểm tra
+      console.log(`[RAG-DEBUG] 📄 Context đầu tiên: "${contexts[0]?.slice(0, 100)}..."`)
       return contexts.join('\n')
+    } else {
+      console.log('[RAG-DEBUG] ⚠️ Không tìm thấy context nào phù hợp')
+      return ''
     }
-    return ''
   } catch (err) {
-    console.error('[RAG] Lỗi lấy context:', err.message)
+    console.error('[RAG] ❌ Lỗi lấy context:', err.message)
     return ''
   }
 }
@@ -102,20 +118,29 @@ async function fetchRAGContext(query, topK = 5) {
  * @param {number} wheatCount
  */
 async function generate(systemPrompt, userPrompt, emotionalState, memoryContext, wheatCount) {
+  console.log(`[RAG-DEBUG] ===== generate() bắt đầu =====`)
+  console.log(`[RAG-DEBUG] userPrompt: "${userPrompt}" (độ dài: ${userPrompt?.length || 0})`)
+
   // --- LẤY RAG CONTEXT TỪ SUPABASE ---
   let ragContext = ''
   
   // Chỉ lấy RAG context nếu userPrompt có nội dung (không phải proactive rỗng)
   if (userPrompt && userPrompt.trim().length > 0) {
+    console.log('[RAG-DEBUG] Gọi fetchRAGContext...')
     ragContext = await fetchRAGContext(userPrompt, 5)
+  } else {
+    console.log('[RAG-DEBUG] ⚠️ userPrompt rỗng, bỏ qua RAG')
   }
   
   // --- GHÉP RAG CONTEXT VÀO SYSTEM PROMPT ---
   let finalSystemPrompt = systemPrompt
   
   if (ragContext) {
+    console.log(`[RAG-DEBUG] ✅ RAG context có nội dung (độ dài: ${ragContext.length})`)
     finalSystemPrompt = systemPrompt + `\n\n[Thông tin liên quan từ trí nhớ dài hạn (RAG)]:\n${ragContext}\n`
     console.log('📚 Đã ghép RAG context vào system prompt')
+  } else {
+    console.log('[RAG-DEBUG] ⚠️ RAG context rỗng, không ghép vào prompt')
   }
 
   const endpoint = await getBrainEndpoint()
