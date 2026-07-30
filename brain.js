@@ -2,6 +2,7 @@
 
 const { CONFIG } = require('./config')
 const { getBrainEndpoint } = require('./firebase')
+const MemoryRAG = require('./memoryRAG')
 
 /**
  * brain.js
@@ -12,6 +13,22 @@ const { getBrainEndpoint } = require('./firebase')
  * Timeout 15s, parse an toan, fallback khi loi de bot KHONG crash.
  * ------------------------------------------------------------
  */
+
+// Khởi tạo RAG instance (chỉ 1 lần duy nhất)
+let ragInstance = null
+
+function getRagInstance() {
+  if (!ragInstance) {
+    try {
+      ragInstance = new MemoryRAG()
+      console.log('📚 RAG instance đã khởi tạo trong brain.js')
+    } catch (err) {
+      console.error('❌ Lỗi khởi tạo RAG trong brain.js:', err.message)
+      ragInstance = null
+    }
+  }
+  return ragInstance
+}
 
 const VALID_ACTIONS = new Set([
   'idle',
@@ -53,6 +70,31 @@ function sanitizeResponse(raw) {
 }
 
 /**
+ * Lấy RAG context từ Supabase
+ * @param {string} query - Câu hỏi/tin nhắn của người dùng
+ * @param {number} topK - Số lượng context tối đa
+ * @returns {Promise<string>} - Chuỗi context đã gộp
+ */
+async function fetchRAGContext(query, topK = 5) {
+  if (!query || query.trim().length < 3) return ''
+
+  const rag = getRagInstance()
+  if (!rag) return ''
+
+  try {
+    const contexts = await rag.getContext(query, topK)
+    if (contexts && contexts.length > 0) {
+      console.log(`📚 RAG: Đã lấy ${contexts.length} context cho query: "${query.slice(0, 50)}..."`)
+      return contexts.join('\n')
+    }
+    return ''
+  } catch (err) {
+    console.error('[RAG] Lỗi lấy context:', err.message)
+    return ''
+  }
+}
+
+/**
  * @param {string} systemPrompt - tu persona.buildSystemPrompt()
  * @param {string} userPrompt - noi dung Tới vua noi, hoac mo ta ngu canh (proactive)
  * @param {object} emotionalState - { affection, mood_tired, mood_scared, mood_happy }
@@ -60,13 +102,29 @@ function sanitizeResponse(raw) {
  * @param {number} wheatCount
  */
 async function generate(systemPrompt, userPrompt, emotionalState, memoryContext, wheatCount) {
+  // --- LẤY RAG CONTEXT TỪ SUPABASE ---
+  let ragContext = ''
+  
+  // Chỉ lấy RAG context nếu userPrompt có nội dung (không phải proactive rỗng)
+  if (userPrompt && userPrompt.trim().length > 0) {
+    ragContext = await fetchRAGContext(userPrompt, 5)
+  }
+  
+  // --- GHÉP RAG CONTEXT VÀO SYSTEM PROMPT ---
+  let finalSystemPrompt = systemPrompt
+  
+  if (ragContext) {
+    finalSystemPrompt = systemPrompt + `\n\n[Thông tin liên quan từ trí nhớ dài hạn (RAG)]:\n${ragContext}\n`
+    console.log('📚 Đã ghép RAG context vào system prompt')
+  }
+
   const endpoint = await getBrainEndpoint()
   if (!endpoint) {
     return fallbackResponse('không lấy được endpoint của Colab (relay URL trống)')
   }
 
   const payload = {
-    system: systemPrompt,
+    system: finalSystemPrompt,
     prompt: userPrompt,
     emotional_state: emotionalState,
     memory_context: memoryContext,
