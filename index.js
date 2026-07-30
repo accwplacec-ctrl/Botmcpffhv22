@@ -61,7 +61,16 @@ function clearSession() {
   }
 }
 
-// ==================== TIỆN ÍCH CHUNG ====================
+// ==================== TIỆN ÍCH LỌC CHUỖI & CHAT ====================
+
+// Hàm làm sạch mã màu (§a, §c...) và Prefix rank ([VIP], [Mem]...)
+function cleanMinecraftText(str) {
+  if (!str) return ''
+  return str
+    .replace(/§[0-9a-fk-or]/gi, '')   // Xóa mã màu/format Minecraft
+    .replace(/^\[.*?\]\s*/g, '')      // Xóa prefix [Thành viên], [VIP] ở đầu
+    .trim()
+}
 
 function say(message) {
   if (!bot || !message) return
@@ -197,37 +206,44 @@ function onPlayerCollect(collector, collected) {
 
 // ==================== SỰ KIỆN: CHAT & KIỂM TRA TRIGGER / SESSION ====================
 
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
 function hasTriggerWord(message) {
-  const lower = (message || '').toLowerCase()
-  return CONFIG.triggerWords.some((w) => {
-    if (!w) return false
-    const pattern = new RegExp(`\\b${escapeRegex(w)}\\b`, 'i')
-    return pattern.test(lower)
-  })
+  if (!message) return false
+  const lowerMsg = cleanMinecraftText(message).toLowerCase()
+  const triggers = (CONFIG.triggerWords || []).filter((w) => w && w.trim() !== '')
+
+  for (const trigger of triggers) {
+    const cleanTrigger = trigger.toLowerCase().trim()
+    if (lowerMsg.includes(cleanTrigger)) {
+      return true
+    }
+  }
+  return false
 }
 
 async function onChat(username, message) {
-  if (!bot || username === bot.username) return
-  console.log(`💬 <${username}> ${message}`)
+  if (!bot) return
 
-  const isOwner = CONFIG.ownerNames.includes(username)
-  chatLog.addMessage(username, message, isOwner)
+  // Làm sạch username và message trước khi xử lý
+  const cleanUsername = cleanMinecraftText(username)
+  const cleanMsg = cleanMinecraftText(message)
+
+  if (!cleanMsg || cleanUsername === bot.username) return
+  console.log(`💬 <${cleanUsername}> ${cleanMsg}`)
+
+  const isOwner = CONFIG.ownerNames.includes(cleanUsername)
+  chatLog.addMessage(cleanUsername, cleanMsg, isOwner)
 
   // ĐIỀU KIỆN KÍCH HOẠT: Có Trigger Word HOẶC đang trong Session 30s với người này
-  const isTriggered = hasTriggerWord(message)
-  const isSessionActive = (username === currentSpeaker)
+  const isTriggered = hasTriggerWord(cleanMsg)
+  const isSessionActive = cleanUsername === currentSpeaker
 
   if (isTriggered || isSessionActive) {
-    console.log(`🎯 Kích hoạt lượt đọc AI cho ${username} (Triggered: ${isTriggered}, SessionActive: ${isSessionActive})`)
+    console.log(`🎯 Kích hoạt lượt đọc AI cho ${cleanUsername} (Triggered: ${isTriggered}, SessionActive: ${isSessionActive})`)
     if (isOwner) {
-      memory.pushConversation('owner', message)
-      await runBrainTurn('chat', message, username)
+      memory.pushConversation('owner', cleanMsg)
+      await runBrainTurn('chat', cleanMsg, cleanUsername)
     } else {
-      await runBrainTurn('stranger_chat', message, username)
+      await runBrainTurn('stranger_chat', cleanMsg, cleanUsername)
     }
   }
 }
