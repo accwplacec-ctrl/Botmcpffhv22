@@ -13,6 +13,37 @@ const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supaba
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 /**
+ * Hàm lưu một đoạn ký ức mới vào Supabase Vector RAG
+ * @param {string} content - Nội dung cần nhớ
+ */
+async function saveMemoryRAG(content) {
+  try {
+    if (!supabase || !process.env.GEMINI_API_KEY || !content) return;
+
+    // 1. Tạo embedding cho nội dung bằng mô hình text-embedding-004
+    const embeddingResult = await ai.models.embedContent({
+      model: 'text-embedding-004',
+      contents: content,
+    });
+
+    const embedding = embeddingResult.embedding.values;
+
+    // 2. Insert vào bảng bot_rag_memories
+    const { error } = await supabase
+      .from('bot_rag_memories')
+      .insert([{ content: content, embedding: embedding }]);
+
+    if (error) {
+      console.error('❌ Lỗi khi lưu RAG memory vào Supabase:', error.message);
+    } else {
+      console.log('🧠 Đã ghi nhớ vào Supabase RAG:', content);
+    }
+  } catch (err) {
+    console.error('❌ Lỗi ngoại lệ khi saveMemoryRAG:', err.message);
+  }
+}
+
+/**
  * Hàm truy vấn RAG kết hợp trí nhớ cũ từ Supabase Vector
  * @param {string} userQuery - Câu chat hiện tại của người chơi
  * @returns {Promise<string>} - Trả về chuỗi kiến thức nền để gieo vào prompt
@@ -35,7 +66,7 @@ async function queryMemoryRAG(userQuery) {
     const { data: matches, error } = await supabase.rpc('match_memories', {
       query_embedding: embedding,
       match_threshold: 0.5, // Ngưỡng tương đồng
-      match_count: 3,       // Lấy tối đa 3 kết quả phù hợp nhất
+      match_count: 3,        // Lấy tối đa 3 kết quả phù hợp nhất
     });
 
     if (error || !matches || matches.length === 0) {
@@ -52,4 +83,4 @@ async function queryMemoryRAG(userQuery) {
   }
 }
 
-module.exports = { queryMemoryRAG };
+module.exports = { saveMemoryRAG, queryMemoryRAG };
