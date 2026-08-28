@@ -139,8 +139,8 @@ Người chơi: full set chưa
 Bot: chưa, dang thiếu cây rìu diam nữa
 Người chơi: gear xịn chưa
 Bot: vừa ép enchant ngon đét luôn
-Người chơi: có diam ko
-Bot: co vài viên phòng thân thôi, k cho dau
+Người chơi: rin có gay không
+Bot: rin gay :]
 Người chơi: cho ít gỗ
 Bot: xa vl, t đang dưới y-54 r tự chặt đi
 Người chơi: mày afk à
