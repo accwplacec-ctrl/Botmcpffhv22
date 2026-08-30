@@ -16,7 +16,9 @@ async function doTill(bot, garden, moodEngine) {
     await bot.equip(hoe, 'hand')
     await bot.activateBlock(grassBlock)
     moodEngine.notifyFarmAction()
-  } catch (e) { console.log('❌ Lỗi khi cày đất:', e.message) }
+  } catch (e) {
+    console.log('❌ Lỗi khi cày đất:', e.message)
+  }
 }
 
 async function doPlant(bot, garden, moodEngine) {
@@ -37,7 +39,9 @@ async function doPlant(bot, garden, moodEngine) {
     await bot.equip(seeds, 'hand')
     await bot.placeBlock(farmland, new Vec3(0, 1, 0))
     moodEngine.notifyFarmAction()
-  } catch (e) { console.log('❌ Lỗi khi trồng hạt giống:', e.message) }
+  } catch (e) {
+    console.log('❌ Lỗi khi trồng hạt giống:', e.message)
+  }
 }
 
 async function doHarvest(bot, garden, moodEngine, memory, maybeAutoDeliverGift) {
@@ -53,7 +57,9 @@ async function doHarvest(bot, garden, moodEngine, memory, maybeAutoDeliverGift) 
     moodEngine.addHappyOnHarvest()
     memory.addWheatSinceLastGift(1)
     await maybeAutoDeliverGift()
-  } catch (e) { console.log('❌ Lỗi khi thu hoạch:', e.message) }
+  } catch (e) {
+    console.log('❌ Lỗi khi thu hoạch:', e.message)
+  }
 }
 
 async function doDeliverGift(bot, CONFIG, memory, rag, say) {
@@ -70,13 +76,58 @@ async function doDeliverGift(bot, CONFIG, memory, rag, say) {
     say(`Ta để dành được ${total} bó lúa mì, mang ra đây tặng Vân Thiên đó.`)
     if (rag) {
       rag.addDocument(`[SỰ KIỆN] Bot đã tặng ${total} lúa mì cho Vân Thiên`, {
-        type: 'deliver_gift', count: total, milestone: milestone || null, timestamp: Date.now()
+        type: 'deliver_gift',
+        count: total,
+        milestone: milestone || null,
+        timestamp: Date.now()
       }).catch(err => console.error('[RAG] Lỗi lưu sự kiện tặng lúa:', err))
     }
     if (milestone) {
       say(`Ấy chà, vậy là ta đã tặng Vân Thiên tròn ${milestone} bó lúa mì rồi đó, con nhớ giữ sức khoẻ mà làm ăn nghen.`)
     }
-  } catch (e) { console.log('❌ Lỗi khi tặng quà:', e.message) }
+  } catch (e) {
+    console.log('❌ Lỗi khi tặng quà:', e.message)
+  }
 }
 
-module.exports = { doTill, doPlant, doHarvest, doDeliverGift }
+async function doChopWood(bot, say) {
+  const { goals } = require('mineflayer-pathfinder')
+  const log = bot.findBlock({
+    matching: (b) => /_log$/.test(b.name),
+    maxDistance: 32,
+  })
+  if (!log) {
+    if (say) say('quét quanh đây không thấy cây nào cả')
+    return
+  }
+  try {
+    await bot.pathfinder.goto(new goals.GoalNear(log.position.x, log.position.y, log.position.z, 2))
+    await bot.dig(log)
+    if (say) say('chặt xong khúc gỗ rồi đó')
+  } catch (e) {
+    console.log('❌ Lỗi khi chặt gỗ:', e.message)
+    if (say) say('chặt gỗ lỗi mất rồi, thôi bỏ')
+  }
+}
+
+async function doMine(bot, say) {
+  const { goals } = require('mineflayer-pathfinder')
+  const target = bot.findBlock({
+    matching: (b) => ['stone', 'deepslate', 'iron_ore', 'coal_ore'].includes(b.name),
+    maxDistance: 32,
+  })
+  if (!target) {
+    if (say) say('xung quanh không có đá hay quặng gì để đào')
+    return
+  }
+  try {
+    await bot.pathfinder.goto(new goals.GoalNear(target.position.x, target.position.y, target.position.z, 2))
+    await bot.dig(target)
+    if (say) say('đào xong r đó')
+  } catch (e) {
+    console.log('❌ Lỗi khi đào:', e.message)
+    if (say) say('đào lỗi r, thôi kệ')
+  }
+}
+
+module.exports = { doTill, doPlant, doHarvest, doDeliverGift, doChopWood, doMine }
