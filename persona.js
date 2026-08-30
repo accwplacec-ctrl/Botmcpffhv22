@@ -337,7 +337,7 @@ Chỉ trả về DUY NHẤT một JSON object hợp lệ, không thêm chữ nà
 {
   "is_addressing_me": boolean, // true nếu câu chat hướng về bạn hoặc nối tiếp câu chuyện, false nếu đang nói với người khác hoặc nói đổng
   "say": string,               // câu chat ngắn (để "" nếu is_addressing_me = false)
-  "action": "idle|wander|look|emote|rest|till|plant|harvest|deliver_gift",
+  "action": "idle|wander|till|plant|harvest|rest|look_owner|deliver_gift|wave",
   "remember": string|null,
   "affection_delta": number
 }
