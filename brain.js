@@ -74,10 +74,14 @@ function sanitizeResponse(raw) {
 
   const remember = typeof raw.remember === 'string' && raw.remember.trim() ? raw.remember.trim() : null
 
-  let affectionDelta = Number.isFinite(raw.affection_delta) ? Math.round(raw.affection_delta) : 0
+    let affectionDelta = Number.isFinite(raw.affection_delta) ? Math.round(raw.affection_delta) : 0
   affectionDelta = Math.max(-3, Math.min(3, affectionDelta))
 
-  return { say, action, remember, affection_delta: affectionDelta }
+  const goto_x = Number.isFinite(raw.goto_x) ? Math.round(raw.goto_x) : null
+  const goto_y = Number.isFinite(raw.goto_y) ? Math.round(raw.goto_y) : null
+  const goto_z = Number.isFinite(raw.goto_z) ? Math.round(raw.goto_z) : null
+
+  return { say, action, remember, affection_delta: affectionDelta, goto_x, goto_y, goto_z }
 }
 
 /**
