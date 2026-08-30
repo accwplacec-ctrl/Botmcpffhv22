@@ -60,6 +60,23 @@ function clearSession() {
 
 const http = require('http')
 
+let lastCpuUsage = process.cpuUsage()
+let lastCpuCheck = Date.now()
+
+function getCpuPercent() {
+  const currentUsage = process.cpuUsage()
+  const now = Date.now()
+  const elapsedMs = now - lastCpuCheck
+  if (elapsedMs <= 0) return '0.0'
+  const userDiff = currentUsage.user - lastCpuUsage.user
+  const sysDiff = currentUsage.system - lastCpuUsage.system
+  const totalDiffMicros = userDiff + sysDiff
+  const pct = (totalDiffMicros / (elapsedMs * 1000)) * 100
+  lastCpuUsage = currentUsage
+  lastCpuCheck = now
+  return pct.toFixed(1)
+}
+
 function getStatusHtml() {
   const mem = process.memoryUsage()
   const uptimeSec = process.uptime()
@@ -70,7 +87,9 @@ function getStatusHtml() {
   const rssMB = (mem.rss / 1024 / 1024).toFixed(1)
   const heapUsedMB = (mem.heapUsed / 1024 / 1024).toFixed(1)
   const heapTotalMB = (mem.heapTotal / 1024 / 1024).toFixed(1)
+  const externalMB = (mem.external / 1024 / 1024).toFixed(1)
   const heapPct = mem.heapTotal ? (mem.heapUsed / mem.heapTotal * 100).toFixed(0) : 0
+  const cpuPct = getCpuPercent()
 
   const botOnline = !!bot
   const botStatus = botOnline ? '🟢 Đang online' : '🔴 Mất kết nối'
@@ -80,12 +99,30 @@ function getStatusHtml() {
   const speaker = currentSpeaker || '—'
   const wheat = botOnline ? countWheatInInventory() : 0
 
+  const onlinePlayers = botOnline
+    ? Object.keys(bot.players || {}).filter((n) => n !== bot.username)
+    : []
+  const onlinePlayersHtml = onlinePlayers.length ? onlinePlayers.join(', ') : '—'
+
   let moodHtml = '—'
+  let affectionVal = '—'
+  let totalWheatGifted = '—'
+  let lastDied = '—'
+  let firstMeet = '—'
   try {
     const mood = moodEngine.getMoodState()
     const mem2 = memory.summarize()
-    moodHtml = `Affection ${mem2.affection ?? '—'} | Tired ${Math.round(mood.tired)} | Scared ${Math.round(mood.scared)} | Happy ${Math.round(mood.happy)}`
+    affectionVal = mem2.affection ?? '—'
+    moodHtml = `Affection ${affectionVal} | Tired ${Math.round(mood.tired)} | Scared ${Math.round(mood.scared)} | Happy ${Math.round(mood.happy)}`
+    const rawMem = memory.getMemory ? memory.getMemory() : {}
+    totalWheatGifted = rawMem.total_wheat_gifted ?? '—'
+    lastDied = rawMem.last_died_reason ?? '—'
+    firstMeet = rawMem.first_meet ?? '—'
   } catch (e) {}
+
+  const ragStatus = rag ? '🟢 Kết nối' : '🔴 Chưa kết nối'
+  const brainStatus = brainCallInFlight ? '⏳ Đang xử lý...' : '💤 Rảnh'
+  const reconnects = reconnectAttempts
 
   return `<!DOCTYPE html>
 <html lang="vi">
@@ -103,22 +140,38 @@ function getStatusHtml() {
   .value { font-weight: 600; text-align: right; }
   .bar-bg { background: #2a2a4a; border-radius: 6px; height: 10px; overflow: hidden; margin-top: 6px; }
   .bar-fill { background: linear-gradient(90deg,#4ade80,#22c55e); height: 100%; }
+  .section-title { color: #667; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin: 20px 0 8px 4px; }
 </style>
 </head>
 <body>
 <h1>🌾 Ông Tư - Trạng thái Bot</h1>
 
+<div class="section-title">Trong game</div>
 <div class="card">
   <div class="row"><span class="label">Trạng thái Minecraft</span><span class="value">${botStatus}</span></div>
   <div class="row"><span class="label">Vị trí</span><span class="value">${pos}</span></div>
+  <div class="row"><span class="label">Người chơi online</span><span class="value">${onlinePlayersHtml}</span></div>
   <div class="row"><span class="label">Đang trò chuyện với</span><span class="value">${speaker}</span></div>
   <div class="row"><span class="label">Lúa mì trong túi</span><span class="value">${wheat}</span></div>
-  <div class="row"><span class="label">Cảm xúc</span><span class="value">${moodHtml}</span></div>
 </div>
 
+<div class="section-title">Trí nhớ & cảm xúc</div>
+<div class="card">
+  <div class="row"><span class="label">Cảm xúc</span><span class="value">${moodHtml}</span></div>
+  <div class="row"><span class="label">Tổng lúa đã tặng</span><span class="value">${totalWheatGifted}</span></div>
+  <div class="row"><span class="label">Lần chết gần nhất</span><span class="value">${lastDied}</span></div>
+  <div class="row"><span class="label">Lần đầu gặp</span><span class="value">${firstMeet}</span></div>
+  <div class="row"><span class="label">RAG (Supabase)</span><span class="value">${ragStatus}</span></div>
+  <div class="row"><span class="label">Bộ não (brain call)</span><span class="value">${brainStatus}</span></div>
+</div>
+
+<div class="section-title">Hệ thống</div>
 <div class="card">
   <div class="row"><span class="label">Uptime</span><span class="value">${h}h ${m}m ${s}s</span></div>
+  <div class="row"><span class="label">Số lần reconnect</span><span class="value">${reconnects}</span></div>
+  <div class="row"><span class="label">CPU</span><span class="value">${cpuPct}%</span></div>
   <div class="row"><span class="label">RAM (RSS)</span><span class="value">${rssMB} MB</span></div>
+  <div class="row"><span class="label">External (buffers/native)</span><span class="value">${externalMB} MB</span></div>
   <div class="row"><span class="label">Heap dùng / tổng</span><span class="value">${heapUsedMB} / ${heapTotalMB} MB</span></div>
   <div class="bar-bg"><div class="bar-fill" style="width:${heapPct}%"></div></div>
 </div>
