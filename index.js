@@ -19,16 +19,6 @@ const chatLog = require('./chatLog')
 // --- TÍCH HỢP RAG ---
 const MemoryRAG = require('./memoryRAG')
 
-// ==================== HTTP SERVER GIỮ PORT CHO RENDER ====================
-const http = require('http')
-http
-  .createServer((req, res) => res.end('Ông Tư đang làm việc trong vườn.'))
-  .listen(process.env.PORT || 3000, () => {
-    console.log(`🌐 HTTP giữ chỗ đang chạy ở port ${process.env.PORT || 3000}`)
-  })
-
-for (const w of validateConfig()) console.log(`⚠️ ${w}`)
-
 let bot = null
 let reconnectAttempts = 0
 let shuttingDown = false
@@ -65,6 +55,93 @@ function clearSession() {
     sessionTimeoutHandle = null
   }
 }
+
+// ==================== HTTP SERVER: GIỮ PORT CHO RENDER + DASHBOARD TRẠNG THÁI ====================
+
+const http = require('http')
+
+function getStatusHtml() {
+  const mem = process.memoryUsage()
+  const uptimeSec = process.uptime()
+  const h = Math.floor(uptimeSec / 3600)
+  const m = Math.floor((uptimeSec % 3600) / 60)
+  const s = Math.floor(uptimeSec % 60)
+
+  const rssMB = (mem.rss / 1024 / 1024).toFixed(1)
+  const heapUsedMB = (mem.heapUsed / 1024 / 1024).toFixed(1)
+  const heapTotalMB = (mem.heapTotal / 1024 / 1024).toFixed(1)
+  const heapPct = mem.heapTotal ? (mem.heapUsed / mem.heapTotal * 100).toFixed(0) : 0
+
+  const botOnline = !!bot
+  const botStatus = botOnline ? '🟢 Đang online' : '🔴 Mất kết nối'
+  const pos = botOnline && bot.entity
+    ? `(${bot.entity.position.x.toFixed(1)}, ${bot.entity.position.y.toFixed(1)}, ${bot.entity.position.z.toFixed(1)})`
+    : '—'
+  const speaker = currentSpeaker || '—'
+  const wheat = botOnline ? countWheatInInventory() : 0
+
+  let moodHtml = '—'
+  try {
+    const mood = moodEngine.getMoodState()
+    const mem2 = memory.summarize()
+    moodHtml = `Affection ${mem2.affection ?? '—'} | Tired ${Math.round(mood.tired)} | Scared ${Math.round(mood.scared)} | Happy ${Math.round(mood.happy)}`
+  } catch (e) {}
+
+  return `<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="10">
+<title>Ông Tư - Trạng thái Bot</title>
+<style>
+  body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #eee; padding: 24px; max-width: 600px; margin: 0 auto; }
+  h1 { color: #ffd700; }
+  .card { background: #16213e; border-radius: 12px; padding: 16px 20px; margin-bottom: 12px; }
+  .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #2a2a4a; }
+  .row:last-child { border-bottom: none; }
+  .label { color: #9aa; }
+  .value { font-weight: 600; text-align: right; }
+  .bar-bg { background: #2a2a4a; border-radius: 6px; height: 10px; overflow: hidden; margin-top: 6px; }
+  .bar-fill { background: linear-gradient(90deg,#4ade80,#22c55e); height: 100%; }
+</style>
+</head>
+<body>
+<h1>🌾 Ông Tư - Trạng thái Bot</h1>
+
+<div class="card">
+  <div class="row"><span class="label">Trạng thái Minecraft</span><span class="value">${botStatus}</span></div>
+  <div class="row"><span class="label">Vị trí</span><span class="value">${pos}</span></div>
+  <div class="row"><span class="label">Đang trò chuyện với</span><span class="value">${speaker}</span></div>
+  <div class="row"><span class="label">Lúa mì trong túi</span><span class="value">${wheat}</span></div>
+  <div class="row"><span class="label">Cảm xúc</span><span class="value">${moodHtml}</span></div>
+</div>
+
+<div class="card">
+  <div class="row"><span class="label">Uptime</span><span class="value">${h}h ${m}m ${s}s</span></div>
+  <div class="row"><span class="label">RAM (RSS)</span><span class="value">${rssMB} MB</span></div>
+  <div class="row"><span class="label">Heap dùng / tổng</span><span class="value">${heapUsedMB} / ${heapTotalMB} MB</span></div>
+  <div class="bar-bg"><div class="bar-fill" style="width:${heapPct}%"></div></div>
+</div>
+
+<p style="color:#667; font-size:12px;">Tự làm mới mỗi 10 giây · /ping dùng cho UptimeRobot</p>
+</body>
+</html>`
+}
+
+http
+  .createServer((req, res) => {
+    if (req.url === '/ping') {
+      res.writeHead(200, { 'Content-Type': 'text/plain' })
+      return res.end('pong')
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    res.end(getStatusHtml())
+  })
+  .listen(process.env.PORT || 3000, () => {
+    console.log(`🌐 HTTP giữ chỗ đang chạy ở port ${process.env.PORT || 3000}`)
+  })
+
+for (const w of validateConfig()) console.log(`⚠️ ${w}`)
 
 // ==================== TIỆN ÍCH LỌC CHUỖI & CHAT ====================
 
@@ -333,7 +410,7 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
         `(Ghi chú riêng cho lượt này: Ông Tư vừa hồi sinh sau khi chết vì "${deathMention}" — hãy than thở một chút về việc này rồi thôi, không nhắc lại các lần sau.)`
       )
     }
-    
+
     if (mode === 'proactive') {
       promptParts.push('(Ông Tư đang chủ động bắt chuyện vì Vân Thiên đang ở trong vườn, Vân Thiên chưa nói gì cả.)')
     } else if (mode === 'stranger_chat') {
@@ -344,7 +421,7 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
     } else {
       promptParts.push(`Vân Thiên vừa nói: "${userMessage}"`)
     }
-    
+
     const userPrompt = promptParts.join('\n')
 
     const systemPrompt = persona.buildSystemPrompt(
