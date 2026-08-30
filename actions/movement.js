@@ -16,7 +16,9 @@ async function doRest(bot, moodEngine) {
     bot.pathfinder.setGoal(null)
     bot.setControlState('sneak', true)
     setTimeout(() => {
-      try { bot.setControlState('sneak', false) } catch (e) {}
+      try {
+        bot.setControlState('sneak', false)
+      } catch (e) {}
     }, 8000)
   } catch (e) {}
 }
@@ -29,4 +31,20 @@ function doLookOwner(bot, getOwnerEntity) {
   } catch (e) {}
 }
 
-module.exports = { doWander, doRest, doLookOwner }
+async function doGoto(bot, x, y, z, say) {
+  const { goals } = require('mineflayer-pathfinder')
+  if (x == null || z == null) {
+    if (say) say('toạ độ gì đâu mà đi')
+    return
+  }
+  try {
+    const targetY = y != null ? y : bot.entity.position.y
+    await bot.pathfinder.goto(new goals.GoalNear(x, targetY, z, 2))
+    if (say) say('tới nơi rồi đó')
+  } catch (e) {
+    console.log('❌ Lỗi khi goto:', e.message)
+    if (say) say('đi lỗi mất rồi')
+  }
+}
+
+module.exports = { doWander, doRest, doLookOwner, doGoto }
