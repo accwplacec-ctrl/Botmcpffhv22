@@ -1,0 +1,22 @@
+{
+  "name": "ong-tu-bot",
+  "version": "1.0.0",
+  "description": "Bot Minecraft nhân cách hóa 'Ông Tư' - lão nông dân, điều khiển bởi AI, trí nhớ Supabase Vector & JSON",
+  "main": "index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@google/genai": "latest",
+    "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.5",
+    "minecraft-data": "^3.111.0",
+    "mineflayer": "^4.37.1",
+    "mineflayer-pathfinder": "^2.4.5",
+    "vec3": "^0.1.8"
+  }
+}
