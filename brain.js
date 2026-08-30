@@ -30,19 +30,18 @@ function getRagInstance() {
   return ragInstance
 }
 
+// ĐỒNG BỘ với danh sách case trong actions/main.js — mọi giá trị ở đây
+// PHẢI có case xử lý tương ứng bên actions/, nếu không sẽ luôn rơi về idle.
 const VALID_ACTIONS = new Set([
   'idle',
   'wander',
   'till',
   'plant',
   'harvest',
-  'sit',
-  'wave',
+  'rest',
   'look_owner',
   'deliver_gift',
-  'rest',
-  'avoid_owner',
-  'avoid_monster',
+  'wave',
 ])
 
 function fallbackResponse(reason) {
@@ -60,7 +59,16 @@ function sanitizeResponse(raw) {
   if (!raw || typeof raw !== 'object') return fallbackResponse('response không phải object')
 
   const say = typeof raw.say === 'string' ? raw.say.slice(0, 250) : ''
-  const action = VALID_ACTIONS.has(raw.action) ? raw.action : 'idle'
+
+  let action = 'idle'
+  if (VALID_ACTIONS.has(raw.action)) {
+    action = raw.action
+  } else {
+    console.log(
+      `⚠️ action không hợp lệ từ Colab: ${JSON.stringify(raw.action)} (kiểu: ${typeof raw.action}) — fallback về "idle". Giá trị hợp lệ: ${[...VALID_ACTIONS].join(', ')}`
+    )
+  }
+
   const remember = typeof raw.remember === 'string' && raw.remember.trim() ? raw.remember.trim() : null
 
   let affectionDelta = Number.isFinite(raw.affection_delta) ? Math.round(raw.affection_delta) : 0
@@ -123,7 +131,7 @@ async function generate(systemPrompt, userPrompt, emotionalState, memoryContext,
 
   // --- LẤY RAG CONTEXT TỪ SUPABASE ---
   let ragContext = ''
-  
+
   // Chỉ lấy RAG context nếu userPrompt có nội dung (không phải proactive rỗng)
   if (userPrompt && userPrompt.trim().length > 0) {
     console.log('[RAG-DEBUG] Gọi fetchRAGContext...')
@@ -131,10 +139,10 @@ async function generate(systemPrompt, userPrompt, emotionalState, memoryContext,
   } else {
     console.log('[RAG-DEBUG] ⚠️ userPrompt rỗng, bỏ qua RAG')
   }
-  
+
   // --- GHÉP RAG CONTEXT VÀO SYSTEM PROMPT ---
   let finalSystemPrompt = systemPrompt
-  
+
   if (ragContext) {
     console.log(`[RAG-DEBUG] ✅ RAG context có nội dung (độ dài: ${ragContext.length})`)
     finalSystemPrompt = systemPrompt + `\n\n[Thông tin liên quan từ trí nhớ dài hạn (RAG)]:\n${ragContext}\n`
@@ -183,6 +191,9 @@ async function generate(systemPrompt, userPrompt, emotionalState, memoryContext,
     } catch (e) {
       return fallbackResponse(`không parse được JSON trả về: ${e.message}`)
     }
+
+    // Log raw action trước khi sanitize, để biết chính xác Colab đang trả gì
+    console.log(`[RAG-DEBUG] raw action từ Colab: ${JSON.stringify(data?.action)}`)
 
     return sanitizeResponse(data)
   } catch (e) {
