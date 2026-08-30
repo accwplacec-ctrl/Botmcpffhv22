@@ -42,6 +42,9 @@ const VALID_ACTIONS = new Set([
   'look_owner',
   'deliver_gift',
   'wave',
+  'chop_wood',
+  'mine',
+  'goto',
 ])
 
 function fallbackResponse(reason) {
