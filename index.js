@@ -1,9 +1,7 @@
 'use strict'
 
 const mineflayer = require('mineflayer')
-const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
-const { GoalNear } = goals
-const { Vec3 } = require('vec3')
+const { pathfinder, Movements } = require('mineflayer-pathfinder')
 
 const { CONFIG, validateConfig } = require('./config')
 const firebaseModule = require('./firebase')
@@ -15,6 +13,9 @@ const brain = require('./brain')
 const garden = require('./garden')
 const proactive = require('./proactive')
 const chatLog = require('./chatLog')
+
+// --- ACTIONS (tách ra thư mục actions/) ---
+const { executeAction: dispatchAction } = require('./actions/main')
 
 // --- TÍCH HỢP RAG ---
 const MemoryRAG = require('./memoryRAG')
@@ -522,12 +523,12 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
         if (mode === 'chat' && response.affection_delta > 0) moodEngine.addHappyOnPositiveChat()
       }
 
-      await executeAction(response.action)
+      await runAction(response.action)
     } else {
       console.log(`🤖 LLM nhận diện ${speakerUsername || 'người chơi'} không hướng về bot. Tắt Session & Im lặng.`)
       clearSession()
       if (response.action) {
-        await executeAction(response.action)
+        await runAction(response.action)
       }
     }
   } catch (e) {
@@ -537,203 +538,30 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
   }
 }
 
-// ==================== DISPATCHER: THỰC THI ACTION TỪ AI ====================
+// ==================== THỰC THI ACTION (delegate sang actions/main.js) ====================
 
-async function executeAction(action) {
-  if (!bot) return
-  try {
-    switch (action) {
-      case 'idle':
-        return doIdle()
-      case 'wander':
-        return doWander()
-      case 'look':
-        return doLook()
-      case 'emote':
-        return doEmote()
-      case 'rest':
-        return doRest()
-      case 'till':
-        return doTill()
-      case 'plant':
-        return doPlant()
-      case 'harvest':
-        return doHarvest()
-      case 'deliver_gift':
-        return doDeliverGift()
-      default:
-        console.log(`❓ Action không xác định: ${action}`)
-        return doIdle()
-    }
-  } catch (e) {
-    console.log(`❌ Lỗi khi thực thi action "${action}":`, e.message)
-  }
-}
-
-// ==================== CÁC HÀNH ĐỘNG DI CHUYỂN & NGHỈ NGƠI ====================
-
-function doIdle() {
-  try {
-    bot.pathfinder.setGoal(null)
-  } catch (e) {}
-  moodEngine.notifyRestOrIdle()
-}
-
-async function doWander() {
-  moodEngine.notifyRestOrIdle()
-  const point = garden.randomPointInGarden()
-  const groundY = garden.findGroundY(bot, point.x, point.z)
-  if (groundY === null) return
-  try {
-    await bot.pathfinder.goto(new GoalNear(point.x, groundY, point.z, 1))
-  } catch (e) {}
-}
-
-async function doRest() {
-  moodEngine.notifyRestOrIdle()
-  try {
-    bot.pathfinder.setGoal(null)
-    bot.setControlState('sneak', true)
-    setTimeout(() => {
-      try {
-        bot.setControlState('sneak', false)
-      } catch (e) {}
-    }, 8000)
-  } catch (e) {}
-}
-
-function doLookOwner() {
-  const owner = getOwnerEntity()
-  if (!owner || !bot.entity) return
-  try {
-    bot.lookAt(owner.position.offset(0, owner.height || 1.6, 0), true)
-  } catch (e) {}
-}
-
-function doLook() {
-  return doLookOwner()
-}
-
-function doEmote() {
-  try {
-    bot.swingArm('right')
-  } catch (e) {}
-}
-
-// ==================== CANH TÁC THẬT: TILL / PLANT / HARVEST ====================
-
-async function doTill() {
-  const hoe = bot.inventory.items().find((i) => /_hoe$/.test(i.name))
-  if (!hoe) return
-
-  const grassBlock = bot.findBlock({
-    matching: (block) => block.name === 'grass_block' && garden.isInGarden(block.position),
-    maxDistance: 32,
+function runAction(action) {
+  return dispatchAction(action, {
+    bot,
+    garden,
+    moodEngine,
+    memory,
+    CONFIG,
+    rag,
+    say,
+    getOwnerEntity,
+    maybeAutoDeliverGift,
   })
-  if (!grassBlock) return
-
-  try {
-    await bot.pathfinder.goto(new GoalNear(grassBlock.position.x, grassBlock.position.y, grassBlock.position.z, 2))
-    await bot.equip(hoe, 'hand')
-    await bot.activateBlock(grassBlock)
-    moodEngine.notifyFarmAction()
-  } catch (e) {
-    console.log('❌ Lỗi khi cày đất:', e.message)
-  }
 }
 
-async function doPlant() {
-  const seeds = bot.inventory.items().find((i) => i.name === 'wheat_seeds')
-  if (!seeds) return
-
-  const farmland = bot.findBlock({
-    matching: (block) => block.name === 'farmland' && garden.isInGarden(block.position),
-    maxDistance: 32,
-    point: bot.entity.position,
-    useExtraInfo: (block) => {
-      const above = bot.blockAt(block.position.offset(0, 1, 0))
-      return above && above.name === 'air'
-    },
-  })
-  if (!farmland) return
-
-  try {
-    await bot.pathfinder.goto(new GoalNear(farmland.position.x, farmland.position.y, farmland.position.z, 2))
-    await bot.equip(seeds, 'hand')
-    await bot.placeBlock(farmland, new Vec3(0, 1, 0))
-    moodEngine.notifyFarmAction()
-  } catch (e) {
-    console.log('❌ Lỗi khi trồng hạt giống:', e.message)
-  }
-}
-
-async function doHarvest() {
-  const mcData = require('minecraft-data')(bot.version)
-  const wheatInfo = mcData.blocksByName.wheat
-  if (!wheatInfo) return
-
-  const ripe = bot.findBlock({
-    matching: (block) => block.name === 'wheat' && block.metadata === 7 && garden.isInGarden(block.position),
-    maxDistance: 32,
-  })
-  if (!ripe) return
-
-  try {
-    await bot.pathfinder.goto(new GoalNear(ripe.position.x, ripe.position.y, ripe.position.z, 2))
-    await bot.dig(ripe)
-    moodEngine.notifyFarmAction()
-    moodEngine.addHappyOnHarvest()
-    memory.addWheatSinceLastGift(1)
-    await maybeAutoDeliverGift()
-  } catch (e) {
-    console.log('❌ Lỗi khi thu hoạch:', e.message)
-  }
-}
-
-// ==================== TẶNG QUÀ TỰ ĐỘNG ====================
+// ==================== TẶNG QUÀ TỰ ĐỘNG (kiểm tra ngưỡng, gọi qua actions/interaction.js) ====================
 
 async function maybeAutoDeliverGift() {
   const wheatCount = countWheatInInventory()
   const m = memory.getMemory()
   const shouldGift =
     (m.wheatSinceLastGift || 0) >= CONFIG.gift.wheatThreshold || wheatCount >= CONFIG.gift.fullStackSize
-  if (shouldGift) await doDeliverGift()
-}
-
-async function doDeliverGift() {
-  const wheatCount = countWheatInInventory()
-  if (wheatCount <= 0) return
-
-  const dropPoint = CONFIG.giftDropPoint
-  try {
-    await bot.pathfinder.goto(new GoalNear(dropPoint.x, dropPoint.y, dropPoint.z, 2))
-    const wheatItem = bot.inventory.items().find((i) => i.name === 'wheat')
-    if (!wheatItem) return
-    const total = bot.inventory
-      .items()
-      .filter((i) => i.name === 'wheat')
-      .reduce((sum, i) => sum + i.count, 0)
-
-    await bot.toss(wheatItem.type, null, total)
-    const milestone = memory.addWheatGifted(total)
-    say(`Ta để dành được ${total} bó lúa mì, mang ra đây tặng Vân Thiên đó.`)
-
-    // Lưu sự kiện tặng lúa vào RAG
-    if (rag) {
-      rag.addDocument(`[SỰ KIỆN] Bot đã tặng ${total} lúa mì cho Vân Thiên`, {
-        type: 'deliver_gift',
-        count: total,
-        milestone: milestone || null,
-        timestamp: Date.now()
-      }).catch(err => console.error('[RAG] Lỗi lưu sự kiện tặng lúa:', err))
-    }
-
-    if (milestone) {
-      say(`Ấy chà, vậy là ta đã tặng Vân Thiên tròn ${milestone} bó lúa mì rồi đó, con nhớ giữ sức khoẻ mà làm ăn nghen.`)
-    }
-  } catch (e) {
-    console.log('❌ Lỗi khi tặng quà:', e.message)
-  }
+  if (shouldGift) await runAction('deliver_gift')
 }
 
 // ==================== VÒNG LẶP CANH TÁC TỰ ĐỘNG ====================
@@ -745,11 +573,11 @@ function startFarmingCycle() {
 
     const dominant = moodEngine.getDominantMood()
     if (dominant.type === 'tired') {
-      await doRest()
+      await runAction('rest')
       return
     }
 
-    return doWander()
+    return runAction('wander')
   }, CONFIG.farming.tickIntervalMs)
 }
 
