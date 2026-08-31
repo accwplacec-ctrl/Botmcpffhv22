@@ -27,6 +27,21 @@ function gotoWithTimeout(bot, goal, timeoutMs = 15000) {
   })
 }
 
+// Thử lại với bán kính chấp nhận đích nới rộng dần nếu điểm chính xác không tới được
+async function gotoWithRetry(bot, x, y, z, say, timeoutMs = 15000) {
+  const ranges = [2, 4, 7]
+  for (const r of ranges) {
+    try {
+      await gotoWithTimeout(bot, new GoalNear(x, y, z, r), timeoutMs)
+      return true
+    } catch (e) {
+      if (/goal was changed/i.test(e.message)) return false // bị lệnh khác ghi đè, không phải lỗi thật
+    }
+  }
+  if (say) say('không tới gần chỗ đó được')
+  return false
+}
+
 function doWander(bot, garden, moodEngine) {
   moodEngine.notifyRestOrIdle()
   const point = garden.randomPointInGarden()
@@ -59,16 +74,9 @@ async function doGoto(bot, x, y, z, say) {
     if (say) say('toạ độ gì đâu mà đi')
     return
   }
-  try {
-    const targetY = y != null ? y : bot.entity.position.y
-    await gotoWithTimeout(bot, new GoalNear(x, targetY, z, 2), 20000)
-    if (say) say('tới nơi rồi đó')
-  } catch (e) {
-    console.log('❌ Lỗi khi goto:', e.message)
-    if (say && !/goal was changed/i.test(e.message)) {
-      say(/timeout/i.test(e.message) ? 'kẹt đường quá, thôi bỏ' : 'đi lỗi mất rồi')
-    }
-  }
+  const targetY = y != null ? y : bot.entity.position.y
+  const ok = await gotoWithRetry(bot, x, targetY, z, say, 15000)
+  if (ok && say) say('tới nơi rồi đó')
 }
 
-module.exports = { doWander, doRest, doLookOwner, doGoto }
+module.exports = { doWander, doRest, doLookOwner, doGoto, gotoWithTimeout, gotoWithRetry }
