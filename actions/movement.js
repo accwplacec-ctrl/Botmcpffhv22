@@ -1,14 +1,16 @@
 'use strict'
-const { goals } = require('mineflayer-pathfinder')
+
+const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const { GoalNear } = goals
 
-// Timeout thủ công cho pathfinder — tránh treo vô thời hạn khi bị chặn/kẹt địa hình
 function gotoWithTimeout(bot, goal, timeoutMs = 15000) {
+  console.log(`🚶 [PATHFINDER] Bắt đầu goto → goal: x=${goal.x}, y=${goal.y}, z=${goal.z}, bot đang ở: ${bot.entity.position}`)
   return new Promise((resolve, reject) => {
     let done = false
     const timer = setTimeout(() => {
       if (done) return
       done = true
+      console.log(`⏱️ [PATHFINDER] TIMEOUT sau ${timeoutMs}ms — bot hiện đang ở: ${bot.entity.position}, isMoving: ${bot.pathfinder.isMoving ? bot.pathfinder.isMoving() : 'unknown'}`)
       try { bot.pathfinder.setGoal(null) } catch (e) {}
       reject(new Error('timeout: pathfinder bị kẹt/chặn quá lâu'))
     }, timeoutMs)
@@ -17,11 +19,13 @@ function gotoWithTimeout(bot, goal, timeoutMs = 15000) {
       if (done) return
       done = true
       clearTimeout(timer)
+      console.log(`✅ [PATHFINDER] Tới đích thành công, bot ở: ${bot.entity.position}`)
       resolve()
     }).catch((e) => {
       if (done) return
       done = true
       clearTimeout(timer)
+      console.log(`❌ [PATHFINDER] goto() reject: ${e.message}, bot ở: ${bot.entity.position}`)
       reject(e)
     })
   })
@@ -47,6 +51,7 @@ function doWander(bot, garden, moodEngine) {
   const point = garden.randomPointInGarden()
   const groundY = garden.findGroundY(bot, point.x, point.z)
   if (groundY === null) return
+
   return gotoWithTimeout(bot, new GoalNear(point.x, groundY, point.z, 1), 15000).catch(() => {})
 }
 
@@ -56,7 +61,9 @@ async function doRest(bot, moodEngine) {
     bot.pathfinder.setGoal(null)
     bot.setControlState('sneak', true)
     setTimeout(() => {
-      try { bot.setControlState('sneak', false) } catch (e) {}
+      try {
+        bot.setControlState('sneak', false)
+      } catch (e) {}
     }, 8000)
   } catch (e) {}
 }
