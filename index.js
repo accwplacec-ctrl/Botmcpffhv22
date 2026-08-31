@@ -265,7 +265,6 @@ async function onSpawn() {
   console.log('✅ Ông Tư đã vào vườn tại', bot.entity.position)
   reconnectAttempts = 0
 
-  // Khởi tạo RAG với Supabase
   try {
     rag = new MemoryRAG()
     console.log('📚 Trí nhớ Supabase RAG sẵn sàng!')
@@ -274,13 +273,14 @@ async function onSpawn() {
     rag = null
   }
 
+  const mcData = require('minecraft-data')(bot.version)
   const movements = new Movements(bot, mcData)
-movements.canDig = false            // giữ nguyên, tránh bot đào lung tung
-movements.allowSprinting = true
-movements.allow1by1towers = true    // cho phép dựng cột 1x1 khi cần leo lên
-movements.allowParkour = true       // nhảy qua hố nhỏ thay vì đi vòng
-movements.maxDropDown = 4           // cho phép nhảy xuống cao hơn thay vì tìm đường vòng
-bot.pathfinder.setMovements(movements)
+  movements.canDig = false
+  movements.allowSprinting = true
+  movements.allow1by1towers = true
+  movements.allowParkour = true
+  movements.maxDropDown = 4
+  bot.pathfinder.setMovements(movements)
 
   await memory.init()
   moodEngine.resetSession()
@@ -292,7 +292,6 @@ bot.pathfinder.setMovements(movements)
 
   proactive.start(bot, () => runBrainTurn('proactive', null))
 }
-
 function onEnd(reason) {
   console.log('🔌 Mất kết nối:', reason || '')
   stopAllLoops()
