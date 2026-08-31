@@ -48,11 +48,12 @@ async function gotoWithRetry(bot, x, y, z, say, timeoutMs = 15000) {
 
 function doWander(bot, garden, moodEngine) {
   moodEngine.notifyRestOrIdle()
-  const point = garden.randomPointInGarden()
-  const groundY = garden.findGroundY(bot, point.x, point.z)
-  if (groundY === null) return
-
-  return gotoWithTimeout(bot, new GoalNear(point.x, groundY, point.z, 1), 15000).catch(() => {})
+  const pos = bot.entity.position
+  const dx = (Math.random() - 0.5) * 20
+  const dz = (Math.random() - 0.5) * 20
+  const x = Math.floor(pos.x + dx)
+  const z = Math.floor(pos.z + dz)
+  return gotoWithTimeout(bot, new GoalNear(x, pos.y, z, 1), 15000).catch(() => {})
 }
 
 async function doRest(bot, moodEngine) {
