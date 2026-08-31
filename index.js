@@ -421,7 +421,6 @@ async function onChat(username, message) {
 }
 
 // ==================== GỌI BỘ NÃO VÀ THỰC THI KẾT QUẢ ====================
-
 async function runBrainTurn(mode, userMessage, speakerUsername) {
   if (!bot) return
   if (brainCallInFlight) {
@@ -435,7 +434,6 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
     const moodState = moodEngine.getMoodState()
     const workingFlags = workingMemory.getActiveFlags()
     const wheatCount = countWheatInInventory()
-
     const onlinePlayers = Object.keys(bot.players || {}).filter((name) => name !== bot.username)
 
     // Lấy RAG context từ Supabase
@@ -454,11 +452,9 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
 
     const deathMention = memory.consumeDeathMention()
     const promptParts = []
-
     if (ragContext) {
       promptParts.push(`[Thông tin liên quan từ trí nhớ dài hạn]:\n${ragContext}`)
     }
-
     if (deathMention) {
       promptParts.push(
         `(Ghi chú riêng cho lượt này: Ông Tư vừa hồi sinh sau khi chết vì "${deathMention}" — hãy than thở một chút về việc này rồi thôi, không nhắc lại các lần sau.)`
@@ -477,7 +473,6 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
     }
 
     const userPrompt = promptParts.join('\n')
-
     const systemPrompt = persona.buildSystemPrompt(
       memorySummary,
       moodState,
@@ -494,6 +489,7 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
       mood_scared: Math.round(moodState.scared),
       mood_happy: Math.round(moodState.happy),
     }
+
     const memoryContext = {
       facts: memorySummary.facts,
       events: memorySummary.recent_events,
@@ -503,32 +499,39 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
     }
 
     const response = await brain.generate(systemPrompt, userPrompt, emotionalState, memoryContext, wheatCount)
-
     const isAddressingMe = response.is_addressing_me !== false
 
     if (isAddressingMe) {
       if (speakerUsername) {
         refreshSession(speakerUsername)
       }
-
       if (response.say) {
         say(response.say)
         memory.pushConversation('ong_tu', response.say)
         chatLog.addMessage('Ông Tư', response.say, false, 'bot')
       }
-
       if (mode !== 'stranger_chat') {
         if (response.remember) memory.rememberFromBrain(response.remember)
         if (response.affection_delta) memory.updateAffectionFromChat(response.affection_delta)
         if (mode === 'chat' && response.affection_delta > 0) moodEngine.addHappyOnPositiveChat()
       }
-
-      await runAction(response.action)
+      
+      // ✅ Đã cập nhật truyền tọa độ goto vào runAction
+      await runAction(response.action, { 
+        goto_x: response.goto_x, 
+        goto_y: response.goto_y, 
+        goto_z: response.goto_z 
+      })
     } else {
       console.log(`🤖 LLM nhận diện ${speakerUsername || 'người chơi'} không hướng về bot. Tắt Session & Im lặng.`)
       clearSession()
       if (response.action) {
-        await runAction(response.action)
+        // ✅ Đã cập nhật truyền tọa độ goto vào runAction
+        await runAction(response.action, { 
+          goto_x: response.goto_x, 
+          goto_y: response.goto_y, 
+          goto_z: response.goto_z 
+        })
       }
     }
   } catch (e) {
