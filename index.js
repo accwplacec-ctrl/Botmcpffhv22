@@ -540,17 +540,10 @@ async function runBrainTurn(mode, userMessage, speakerUsername) {
 
 // ==================== THỰC THI ACTION (delegate sang actions/main.js) ====================
 
-function runAction(action) {
+function runAction(action, extra = {}) {
   return dispatchAction(action, {
-    bot,
-    garden,
-    moodEngine,
-    memory,
-    CONFIG,
-    rag,
-    say,
-    getOwnerEntity,
-    maybeAutoDeliverGift,
+    bot, garden, moodEngine, memory, CONFIG, rag, say, getOwnerEntity, maybeAutoDeliverGift,
+    ...extra,
   })
 }
 
