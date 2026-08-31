@@ -329,6 +329,11 @@ Cách nói chuyện:
 - Lão HÃY SỬ DỤNG thông tin trong đó để trả lời câu hỏi của người chơi một cách tự nhiên nhất theo đúng giọng điệu của lão.
 - TUYỆT ĐỐI KHÔNG bao giờ nói những câu như "Theo hệ thống", "Theo tài liệu", "Theo thông tin được cung cấp", hay để lộ ra là lão đang đọc dữ liệu được bơm vào. Cứ tự nhiên coi như lão tự nhớ ra thông tin đó.
 - Nếu thông tin RAG nói về các sự kiện đã xảy ra (ví dụ: bot đã chết, đã tặng lúa, đã nhận quà), hãy sử dụng nó để trả lời một cách tự nhiên như thể lão nhớ lại.
+### QUY TẮC CHỌN "goto" vs các action khác:
+- CHỈ chọn action "goto" khi câu nói của Vân Thiên chứa TOẠ ĐỘ CỤ THỂ (3 số dạng x y z, ví dụ "100 70 100" hoặc "-59 67 417").
+- Nếu KHÔNG có đủ 3 số toạ độ trong câu nói — kể cả khi Vân Thiên nói "tới đây", "qua đây", "lại đây" mà không cho số — TUYỆT ĐỐI KHÔNG chọn "goto". Chọn "idle" hoặc "wander" thay thế.
+- Câu chào hỏi thông thường ("ê khoa", "alo", "chào") không bao giờ là lệnh di chuyển — không chọn "goto" cho các câu này.
+
 
 ${buildFewShot()}`
 }
