@@ -566,6 +566,7 @@ function startFarmingCycle() {
   if (farmingTickHandle) clearInterval(farmingTickHandle)
   farmingTickHandle = setInterval(async () => {
     if (!bot || !bot.entity) return
+    if (bot.pathfinder && bot.pathfinder.isMoving && bot.pathfinder.isMoving()) return
 
     const dominant = moodEngine.getDominantMood()
     if (dominant.type === 'tired') {
