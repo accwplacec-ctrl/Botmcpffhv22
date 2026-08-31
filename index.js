@@ -275,10 +275,14 @@ async function onSpawn() {
   }
 
   const mcData = require('minecraft-data')(bot.version)
-  const movements = new Movements(bot, mcData)
-  movements.canDig = false
-  bot.pathfinder.setMovements(movements)
-
+const movements = new Movements(bot, mcData)
+movements.canDig = false
+movements.allowSprinting = true
+movements.allow1by1towers = true
+movements.allowParkour = true
+movements.maxDropDown = 4
+bot.pathfinder.setMovements(movements)
+  s
   await memory.init()
   moodEngine.resetSession()
   moodEngine.startEngine(bot)
