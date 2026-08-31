@@ -41,10 +41,10 @@ async function doGoto(bot, x, y, z, say) {
     const targetY = y != null ? y : bot.entity.position.y
     await bot.pathfinder.goto(new goals.GoalNear(x, targetY, z, 2))
     if (say) say('tới nơi rồi đó')
-  } catch (e) {
+    } catch (e) {
     console.log('❌ Lỗi khi goto:', e.message)
-    if (say) say('đi lỗi mất rồi')
+    if (say && !/goal was changed/i.test(e.message)) {
+      say('đi lỗi mất rồi')
+    }
   }
-}
-
 module.exports = { doWander, doRest, doLookOwner, doGoto }
