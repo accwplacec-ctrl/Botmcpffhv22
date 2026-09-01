@@ -1,11 +1,12 @@
 // ============================================
-// MINECRAFT BOT - FIX KẸT BLOCK & TỐI ƯU ATERNOS
+// MINECRAFT BOT - FIX VEC3 & PHYSICS TICK
 // ============================================
 
 import mineflayer from 'mineflayer';
 import pathfinderPkg from 'mineflayer-pathfinder';
 const { pathfinder, Movements, goals } = pathfinderPkg;
 import minecraftData from 'minecraft-data';
+import { Vec3 } from 'vec3'; // ⭐ FIX: Import Vec3
 
 // ============================================
 // CẤU HÌNH
@@ -18,8 +19,8 @@ const CONFIG = {
   VERSION: '1.21.4',
   
   PATHFINDER_TIMEOUT: 15000,
-  STUCK_THRESHOLD: 8,        // Giảm xuống 8 giây
-  GOAL_RANGE: 2,             // Tăng lên 2 block (dễ đến đích hơn)
+  STUCK_THRESHOLD: 8,
+  GOAL_RANGE: 2,
   RECONNECT_DELAY: 5000,
   ANTI_AFK_INTERVAL: 30000,
 };
@@ -76,7 +77,7 @@ class MinecraftBot {
   }
 
   // ============================================
-  // SPAWN - CẤU HÌNH MOVEMENTS TỐI ƯU
+  // SPAWN
   // ============================================
   onSpawn() {
     this.log(`Bot đã vào game!`, 'success');
@@ -89,32 +90,30 @@ class MinecraftBot {
     this.startAntiAfk();
     this.startSmartJump(); // ⭐ Tự nhảy khi gặp block
     
-    setTimeout(() => this.bot.chat('🤖 Bot sẵn sàng! Gõ !bot help'), 1500);
+    // Đợi 3 giây rồi mới chat (tránh bị Aternos kick ngay khi spawn)
+    setTimeout(() => {
+      if (this.bot?.entity) this.bot.chat('🤖 Bot sẵn sàng! Gõ !bot help');
+    }, 3000);
   }
 
   // ============================================
-  // ⭐ FIX CHÍNH: CẤU HÌNH MOVEMENTS CHO ATERNOS
+  // CẤU HÌNH MOVEMENTS
   // ============================================
   configureMovements() {
     this.movements = new Movements(this.bot, this.mcData);
     
-    // --- Di chuyển cơ bản ---
-    this.movements.canDig = true;              // ⭐ Tự đào block cản (đất, đá, cát...)
-    this.movements.digCost = 10;               // Chi phí đào cao (ưu tiên đường không cần đào)
-    this.movements.canPlaceOnBreak = true;     // Đặt block xuống nếu cần
-    
-    // --- Nhảy & Leo ---
+    this.movements.canDig = true;
+    this.movements.digCost = 10;
+    this.movements.canPlaceOnBreak = true;
     this.movements.allow1by1towers = true;
     this.movements.allowFreeMotion = true;
-    this.movements.allowParkour = false;       // ⭐ TẮT parkour (anti-cheat Aternos dễ flag)
-    this.movements.allowSprinting = true;      // ⭐ Bật sprint để nhảy xa hơn
+    this.movements.allowParkour = false;
+    this.movements.allowSprinting = true;
     
-    // --- Địa hình ---
-    this.movements.maxDropDown = 3;            // Giảm xuống 3 (an toàn hơn)
-    this.movements.liquidCost = 10;            // Tránh nước/lava triệt để
-    this.movements.scafoldingBlocks = [];      // Không tự đặt block làm thang
+    this.movements.maxDropDown = 3;
+    this.movements.liquidCost = 10;
+    this.movements.scafoldingBlocks = [];
     
-    // --- Tránh nguy hiểm ---
     const avoid = ['lava', 'fire', 'soul_fire', 'sweet_berry_bush', 'cactus'];
     avoid.forEach(name => {
       const b = this.mcData.blocksByName[name];
@@ -122,35 +121,33 @@ class MinecraftBot {
     });
     
     this.bot.pathfinder.setMovements(this.movements);
-    this.log('Movements đã cấu hình (đào block: BẬT, parkour: TẮT)', 'success');
+    this.log('Movements OK (đào: BẬT, parkour: TẮT)', 'success');
   }
 
   // ============================================
-  // ⭐ FIX CHÍNH: TỰ NHẢY KHI GẶP BLOCK TRƯỚC MẶT
+  // ⭐ FIX CHÍNH: TỰ NHẢY KHI GẶP BLOCK
   // ============================================
   startSmartJump() {
-    this.bot.on('physicTick', () => {
+    // ⭐ FIX: Đổi physicTick -> physicsTick
+    this.bot.on('physicsTick', () => {
       if (!this.isMoving && !this.isFollowing) return;
-      if (!this.bot?.entity?.onGround) return; // Đang nhảy rồi thì thôi
+      if (!this.bot?.entity?.onGround) return;
       
-      // Tính vị trí block ngay trước mặt (1.3 block phía trước)
       const yaw = this.bot.entity.yaw;
       const px = this.bot.entity.position.x + Math.sin(yaw) * 1.3;
-      const py = this.bot.entity.position.y + 1; // Mắt bot
+      const py = this.bot.entity.position.y + 1;
       const pz = this.bot.entity.position.z + Math.cos(yaw) * 1.3;
       
-      const blockFront = this.bot.blockAt({ x: px, y: py, z: pz });
-      const blockFeet = this.bot.blockAt({ x: px, y: py - 1, z: pz });
+      // ⭐ FIX: Dùng new Vec3() thay vì object thường
+      const blockFront = this.bot.blockAt(new Vec3(px, py, pz));
+      const blockFeet = this.bot.blockAt(new Vec3(px, py - 1, pz));
       
-      // Nếu có block chắn ngang và block bên dưới là rắn (có thể nhảy lên được)
       if (blockFront && blockFront.boundingBox === 'block' && 
           blockFeet && blockFeet.boundingBox === 'block') {
         
-        // Block cao 1 block -> nhảy lên
-        const blockTop = this.bot.blockAt({ x: px, y: py + 1, z: pz });
+        const blockTop = this.bot.blockAt(new Vec3(px, py + 1, pz));
         if (!blockTop || blockTop.boundingBox !== 'block') {
           this.bot.setControlState('jump', true);
-          // Nhảy xong thả sau 250ms
           setTimeout(() => this.bot.setControlState('jump', false), 250);
         }
       }
@@ -206,9 +203,6 @@ class MinecraftBot {
     }
   }
 
-  // ============================================
-  // LỆNH: GOTO
-  // ============================================
   cmdGoto(args, requester) {
     if (args.length < 3) {
       this.bot.chat('⚠️ Thiếu tọa độ! !bot goto <x> <y> <z>');
@@ -222,7 +216,6 @@ class MinecraftBot {
     this.stopAllMovement();
     this.log(`Đi tới ${x} ${y} ${z}`, 'path');
     
-    // ⭐ Dùng GoalNear range=2 để bot không bị kẹt vì cố đứng chính xác 1 block
     const goal = new goals.GoalNear(x, y, z, CONFIG.GOAL_RANGE);
     this.startPathfinding(goal, `🚶 Đang đi tới ${Math.floor(x)} ${Math.floor(y)} ${Math.floor(z)}...`);
   }
@@ -286,7 +279,7 @@ class MinecraftBot {
   }
 
   // ============================================
-  // PATHFINDING CORE
+  // PATHFINDING
   // ============================================
   startPathfinding(goal, msg) {
     this.isMoving = true;
@@ -326,12 +319,8 @@ class MinecraftBot {
     }, 1000));
   }
 
-  // ============================================
-  // ⭐ THOÁT KẸT NÂNG CAO
-  // ============================================
   attemptUnstuck() {
     this.log('Thoát kẹt...', 'warn');
-    // Nhảy + đi tới + xoay nhẹ
     this.bot.setControlState('jump', true);
     this.bot.setControlState('forward', true);
     this.bot.look(this.bot.entity.yaw + (Math.random() - 0.5), this.bot.entity.pitch, true);
@@ -396,9 +385,26 @@ class MinecraftBot {
     }, CONFIG.ANTI_AFK_INTERVAL));
   }
 
-  onKicked(r) { this.log(`Kick: ${r}`, 'error'); this.cleanup(); this.scheduleReconnect(); }
-  onEnd() { this.log('Mất kết nối', 'warn'); this.cleanup(); this.scheduleReconnect(); }
-  onError(e) { this.log(`Lỗi: ${e.message}`, 'error'); }
+  // ============================================
+  // ⭐ FIX: Xử lý kick reason object
+  // ============================================
+  onKicked(reason) {
+    // Aternos có thể gửi reason dạng object, cần stringify
+    const reasonStr = typeof reason === 'object' ? JSON.stringify(reason) : String(reason);
+    this.log(`Bị kick: ${reasonStr}`, 'error');
+    this.cleanup();
+    this.scheduleReconnect();
+  }
+
+  onEnd() {
+    this.log('Mất kết nối', 'warn');
+    this.cleanup();
+    this.scheduleReconnect();
+  }
+
+  onError(e) {
+    this.log(`Lỗi: ${e.message}`, 'error');
+  }
 
   scheduleReconnect() {
     if (this.timers.has('reconnect')) return;
