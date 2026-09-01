@@ -1,11 +1,12 @@
 {
-  "name": "minecraft-bot",
-  "version": "1.0.0",
-  "description": "Minecraft bot with pathfinder",
+  "name": "minecraft-bot-pro",
+  "version": "2.0.0",
+  "description": "Minecraft bot nâng cao với pathfinder tối ưu",
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
     "mineflayer": "^4.20.0",
