@@ -4,25 +4,26 @@
 // ============================================
 
 import mineflayer from 'mineflayer';
-import { pathfinder, Movements, goals } from 'mineflayer-pathfinder';
+// SỬA LỖI: mineflayer-pathfinder là CommonJS, phải import default rồi destructuring
+import pathfinderPkg from 'mineflayer-pathfinder';
+const { pathfinder, Movements, goals } = pathfinderPkg;
+
 import minecraftData from 'minecraft-data';
 
 // ============================================
 // CẤU HÌNH
 // ============================================
 const CONFIG = {
-  SERVER_IP: process.env.SERVER_IP || 'localhost',
-  SERVER_PORT: parseInt(process.env.SERVER_PORT) || 25565,
-  BOT_USERNAME: process.env.BOT_USERNAME || 'SmartBot',
-  // auth: 'offline' cho cracked, 'microsoft' cho premium
-  AUTH: process.env.BOT_AUTH || 'offline',
+  SERVER_IP: 'jjjggdffgg.aternos.me',
+  SERVER_PORT: 34242,
+  BOT_USERNAME: 'SmartBot',
+  AUTH: 'offline',
   
-  // Cấu hình pathfinder
-  PATHFINDER_TIMEOUT: 10000,      // ms tối đa để tính 1 lộ trình
-  STUCK_THRESHOLD: 10,            // số giây đứng yên coi là kẹt
-  GOAL_RANGE: 1,                  // khoảng cách coi là "đã đến nơi" (tránh kẹt do cố đứng chính xác 1 block)
-  RECONNECT_DELAY: 5000,          // ms chờ reconnect
-  ANTI_AFK_INTERVAL: 30000,       // ms mỗi lần anti-afk
+  PATHFINDER_TIMEOUT: 10000,
+  STUCK_THRESHOLD: 10,
+  GOAL_RANGE: 1,
+  RECONNECT_DELAY: 5000,
+  ANTI_AFK_INTERVAL: 30000,
 };
 
 // ============================================
@@ -33,20 +34,14 @@ class MinecraftBot {
     this.bot = null;
     this.mcData = null;
     this.movements = null;
-    
-    // Quản lý timers
     this.timers = new Map();
-    
-    // Trạng thái di chuyển
     this.isMoving = false;
     this.isFollowing = false;
     this.followTarget = null;
     this.moveStartTime = 0;
     this.lastPos = null;
     this.stuckCounter = 0;
-    this.pendingGoal = null; // Lưu nhiệm vụ để làm lại sau respawn
-    
-    // Thống kê
+    this.pendingGoal = null;
     this.stats = {
       connects: 0,
       commands: 0,
@@ -55,18 +50,12 @@ class MinecraftBot {
     };
   }
 
-  // ============================================
-  // LOGGING
-  // ============================================
   log(msg, type = 'info') {
     const time = new Date().toLocaleTimeString('vi-VN');
     const icons = { info: 'ℹ️', warn: '⚠️', error: '❌', success: '✅', path: '📍' };
     console.log(`[${time}] ${icons[type] || '•'} ${msg}`);
   }
 
-  // ============================================
-  // KHỞI TẠO BOT
-  // ============================================
   connect() {
     this.log(`Đang kết nối tới ${CONFIG.SERVER_IP}:${CONFIG.SERVER_PORT}...`, 'info');
     
@@ -75,6 +64,7 @@ class MinecraftBot {
       port: CONFIG.SERVER_PORT,
       username: CONFIG.BOT_USERNAME,
       auth: CONFIG.AUTH,
+      version: '1.21.4', // Ép phiên bản khớp với server
     });
 
     this.bot.loadPlugin(pathfinder);
@@ -83,85 +73,55 @@ class MinecraftBot {
     this.setupEvents();
   }
 
-  // ============================================
-  // THIẾT LẬP SỰ KIỆN
-  // ============================================
   setupEvents() {
-    // --- Spawn ---
     this.bot.once('spawn', () => this.onSpawn());
-    
-    // --- Chat ---
     this.bot.on('chat', (username, msg) => this.onChat(username, msg));
-    
-    // --- Pathfinder Events ---
     this.bot.on('goal_reached', () => this.onGoalReached());
     this.bot.on('path_stop', () => this.onPathStop());
     this.bot.on('path_update', (r) => this.onPathUpdate(r));
-    
-    // --- Sinh tồn ---
     this.bot.on('death', () => this.onDeath());
     this.bot.on('respawn', () => this.onRespawn());
-    
-    // --- Kết nối ---
     this.bot.on('kicked', (reason) => this.onKicked(reason));
     this.bot.on('end', () => this.onEnd());
     this.bot.on('error', (err) => this.onError(err));
   }
 
-  // ============================================
-  // SỰ KIỆN: SPAWN
-  // ============================================
   onSpawn() {
     this.log(`Bot "${CONFIG.BOT_USERNAME}" đã vào game! (lần kết nối thứ ${this.stats.connects})`, 'success');
     
-    // Khởi tạo minecraft-data và movements
     this.mcData = minecraftData(this.bot.version);
     this.configureMovements();
     
-    // Cấu hình pathfinder nâng cao
     this.bot.pathfinder.thinkTimeout = CONFIG.PATHFINDER_TIMEOUT;
-    this.bot.pathfinder.tickTimeout = 20; // ticks tối đa mỗi lần tính
+    this.bot.pathfinder.tickTimeout = 20;
     
-    // Bắt đầu anti-afk
     this.startAntiAfk();
     
-    // Thông báo sẵn sàng
     setTimeout(() => {
       this.bot.chat('🤖 Bot thông minh đã sẵn sàng! Gõ !bot help');
     }, 1000);
   }
 
-  // ============================================
-  // CẤU HÌNH MOVEMENTS NÂNG CAO
-  // ============================================
   configureMovements() {
     this.movements = new Movements(this.bot, this.mcData);
     
-    // --- Cơ bản ---
-    this.movements.canDig = false;           // Không tự đào block (tránh phá map)
-    this.movements.allow1by1towers = true;   // Cho phép xây cột 1x1 để leo
-    this.movements.allowFreeMotion = true;   // Cho phép rơi tự do
-    this.movements.allowParkour = true;      // Cho phép parkour nhảy
+    this.movements.canDig = false;
+    this.movements.allow1by1towers = true;
+    this.movements.allowFreeMotion = true;
+    this.movements.allowParkour = true;
     
-    // --- Địa hình ---
-    this.movements.maxDropDown = 4;          // Nhảy xuống tối đa 4 block
-    this.movements.liquidCost = 3;           // Chi phí đi trên nước/lava cao hơn (bot sẽ tránh nếu được)
-    this.movements.scafoldingBlocks = [];    // Không tự đặt block làm thang
+    this.movements.maxDropDown = 4;
+    this.movements.liquidCost = 3;
+    this.movements.scafoldingBlocks = [];
     
-    // --- Tránh nguy hiểm ---
-    // Block bot sẽ cố gắng không đi vào
     this.movements.blocksToAvoid.add(this.mcData.blocksByName.lava.id);
     this.movements.blocksToAvoid.add(this.mcData.blocksByName.fire.id);
     this.movements.blocksToAvoid.add(this.mcData.blocksByName.sweet_berry_bush.id);
     
-    // --- Cập nhật ---
     this.bot.pathfinder.setMovements(this.movements);
     this.log('Đã cấu hình movements nâng cao', 'success');
   }
 
-  // ============================================
-  // SỰ KIỆN: CHAT & LỆNH
-  // ============================================
   onChat(username, message) {
     if (username === CONFIG.BOT_USERNAME) return;
     
@@ -172,9 +132,7 @@ class MinecraftBot {
     const args = msg.slice(5).trim().split(/\s+/);
     const cmd = args[0].toLowerCase();
     
-    // Routing lệnh
     switch (cmd) {
-      // --- Di chuyển ---
       case 'đi':
         if (args[1] === 'tới') this.cmdGoto(args.slice(2), username);
         else this.bot.chat('❓ Cú pháp: !bot đi tới <x> <y> <z>');
@@ -188,44 +146,32 @@ class MinecraftBot {
       case 'follow':
         this.cmdFollow(args[1], username);
         break;
-        
-      // --- Dừng ---
       case 'dừng':
       case 'stop':
       case 'unfollow':
         this.cmdStop();
         break;
-        
-      // --- Thông tin ---
       case 'info':
         this.cmdInfo();
         break;
       case 'stats':
         this.cmdStats();
         break;
-        
-      // --- Cấu hình ---
       case 'settings':
         this.cmdSettings();
         break;
       case 'parkour':
         this.toggleParkour();
         break;
-        
-      // --- Trợ giúp ---
       case 'help':
       case 'giúp':
         this.cmdHelp();
         break;
-        
       default:
         this.bot.chat('❓ Lệnh không hợp lệ. Gõ !bot help để xem danh sách.');
     }
   }
 
-  // ============================================
-  // LỆNH: GOTO (Đi tới tọa độ)
-  // ============================================
   cmdGoto(args, requester) {
     if (args.length < 3) {
       this.bot.chat(`⚠️ Thiếu tọa độ! Dùng: !bot goto <x> <y> <z>`);
@@ -244,14 +190,10 @@ class MinecraftBot {
     this.stopAllMovement();
     this.log(`Nhận lệnh đi tới ${x} ${y} ${z} từ ${requester}`, 'path');
     
-    // Sử dụng GoalNear thay vì GoalBlock để bot không bị kẹt vì cố đứng chính xác 1 block
     const goal = new goals.GoalNear(x, y, z, CONFIG.GOAL_RANGE);
     this.startPathfinding(goal, `Đang di chuyển tới ${x} ${y} ${z}...`);
   }
 
-  // ============================================
-  // LỆNH: COME (Đến chỗ người chơi)
-  // ============================================
   cmdCome(targetName, requester) {
     const name = targetName || requester;
     const target = this.bot.players[name]?.entity;
@@ -269,9 +211,6 @@ class MinecraftBot {
     this.startPathfinding(goal, `Đang đến chỗ ${name}...`);
   }
 
-  // ============================================
-  // LỆNH: FOLLOW (Theo sau người chơi)
-  // ============================================
   cmdFollow(targetName, requester) {
     const name = targetName || requester;
     const target = this.bot.players[name]?.entity;
@@ -288,14 +227,10 @@ class MinecraftBot {
     this.bot.chat(`👀 Đang theo sau ${name}... (gõ !bot stop để dừng)`);
     this.log(`Bắt đầu follow ${name}`, 'path');
     
-    // GoalFollow: theo sau với khoảng cách 2 block
     const goal = new goals.GoalFollow(target, 2);
-    this.bot.pathfinder.setGoal(goal, true); // true = dynamic goal (cập nhật liên tục)
+    this.bot.pathfinder.setGoal(goal, true);
   }
 
-  // ============================================
-  // LỆNH: STOP
-  // ============================================
   cmdStop() {
     const wasMoving = this.isMoving || this.isFollowing;
     this.stopAllMovement();
@@ -306,9 +241,6 @@ class MinecraftBot {
     }
   }
 
-  // ============================================
-  // LỆNH: INFO
-  // ============================================
   cmdInfo() {
     const pos = this.bot.entity.position;
     const health = Math.floor(this.bot.health || 0);
@@ -319,9 +251,6 @@ class MinecraftBot {
     );
   }
 
-  // ============================================
-  // LỆNH: STATS
-  // ============================================
   cmdStats() {
     this.bot.chat(
       `📊 Kết nối: ${this.stats.connects} | ` +
@@ -331,9 +260,6 @@ class MinecraftBot {
     );
   }
 
-  // ============================================
-  // LỆNH: SETTINGS
-  // ============================================
   cmdSettings() {
     const m = this.movements;
     this.bot.chat(
@@ -342,18 +268,12 @@ class MinecraftBot {
     );
   }
 
-  // ============================================
-  // LỆNH: TOGGLE PARKOUR
-  // ============================================
   toggleParkour() {
     this.movements.allowParkour = !this.movements.allowParkour;
     this.bot.pathfinder.setMovements(this.movements);
     this.bot.chat(this.movements.allowParkour ? '✅ Parkour: BẬT' : '❌ Parkour: TẮT');
   }
 
-  // ============================================
-  // LỆNH: HELP
-  // ============================================
   cmdHelp() {
     const helps = [
       '!bot goto <x> <y> <z> - Đi tới tọa độ',
@@ -365,30 +285,22 @@ class MinecraftBot {
       '!bot parkour - Bật/tắt parkour',
       '!bot settings - Cấu hình movements',
     ];
-    // Gửi từng dòng để không bị cắt tin nhắn
     helps.forEach((h, i) => setTimeout(() => this.bot.chat(h), i * 300));
   }
 
-  // ============================================
-  // PATHFINDING CORE
-  // ============================================
   startPathfinding(goal, announceMsg) {
     this.isMoving = true;
     this.moveStartTime = Date.now();
     this.stuckCounter = 0;
     this.lastPos = this.bot.entity.position.clone();
-    this.pendingGoal = goal; // Lưu lại để respawn có thể tiếp tục
+    this.pendingGoal = goal;
     
     this.bot.chat(announceMsg);
     this.bot.pathfinder.setGoal(goal);
     
-    // Bắt đầu giám sát bị kẹt
     this.startStuckMonitor();
   }
 
-  // ============================================
-  // GIÁM SÁT BỊ KẸT NÂNG CAO
-  // ============================================
   startStuckMonitor() {
     this.clearTimer('stuck');
     
@@ -397,17 +309,13 @@ class MinecraftBot {
       
       const currentPos = this.bot.entity.position;
       const dist = currentPos.distanceTo(this.lastPos);
-      const elapsed = (Date.now() - this.moveStartTime) / 1000;
       
-      // Nếu di chuyển < 0.3 block trong 1 giây -> có khả năng kẹt
       if (dist < 0.3) {
         this.stuckCounter++;
         
-        // Thử tự thoát kẹt sau 3 giây
         if (this.stuckCounter === 3) {
           this.attemptUnstuck();
         }
-        // Báo thất bại sau threshold
         else if (this.stuckCounter >= CONFIG.STUCK_THRESHOLD) {
           this.log('Bot bị kẹt quá lâu, hủy nhiệm vụ', 'warn');
           this.stopAllMovement();
@@ -416,7 +324,6 @@ class MinecraftBot {
           return;
         }
       } else {
-        // Đang di chuyển tốt -> reset counter
         this.stuckCounter = 0;
       }
       
@@ -424,19 +331,12 @@ class MinecraftBot {
     }, 1000));
   }
 
-  // ============================================
-  // TỰ THOÁT KẸT (NUDGE)
-  // ============================================
   attemptUnstuck() {
     this.log('Thử thoát kẹt...', 'warn');
-    // Thử nhảy + đi ngẫu nhiên để thoát khỏi block bị bug
     this.bot.setControlState('jump', true);
     setTimeout(() => this.bot.setControlState('jump', false), 500);
   }
 
-  // ============================================
-  // SỰ KIỆN: ĐẾN NƠI
-  // ============================================
   onGoalReached() {
     if (!this.isMoving) return;
     this.log('Đã đến đích!', 'success');
@@ -446,9 +346,6 @@ class MinecraftBot {
     this.bot.chat('✅ Đã đến nơi!');
   }
 
-  // ============================================
-  // SỰ KIỆN: PATH STOP
-  // ============================================
   onPathStop() {
     if (!this.isMoving) return;
     this.log('Pathfinder dừng lại (không tìm được đường)', 'warn');
@@ -458,18 +355,12 @@ class MinecraftBot {
     this.bot.chat('❌ Không tìm được đường đi!');
   }
 
-  // ============================================
-  // SỰ KIỆN: PATH UPDATE (log debug)
-  // ============================================
   onPathUpdate(result) {
     if (result.status === 'noPath') {
       this.log('Không tìm thấy đường đi tới đích', 'warn');
     }
   }
 
-  // ============================================
-  // SỰ KIỆN: DEATH & RESPAWN
-  // ============================================
   onDeath() {
     this.log('Bot đã chết!', 'error');
     this.stopAllMovement();
@@ -479,11 +370,9 @@ class MinecraftBot {
   onRespawn() {
     this.log('Bot đã hồi sinh', 'success');
     
-    // Cấu hình lại movements sau respawn (bị reset)
     setTimeout(() => {
       this.configureMovements();
       
-      // Nếu đang có nhiệm vụ dở, hỏi người chơi có muốn tiếp tục không
       if (this.pendingGoal && !this.isFollowing) {
         this.bot.chat('♻️ Đã hồi sinh! Nhiệm vụ cũ đã bị hủy.');
         this.pendingGoal = null;
@@ -491,9 +380,6 @@ class MinecraftBot {
     }, 1000);
   }
 
-  // ============================================
-  // DỪNG MỌI HOẠT ĐỘNG
-  // ============================================
   stopAllMovement() {
     this.isMoving = false;
     this.isFollowing = false;
@@ -505,7 +391,6 @@ class MinecraftBot {
       this.bot.pathfinder.setGoal(null);
     }
     
-    // Tắt các control state
     if (this.bot) {
       this.bot.setControlState('forward', false);
       this.bot.setControlState('jump', false);
@@ -515,23 +400,16 @@ class MinecraftBot {
     this.clearTimer('stuck');
   }
 
-  // ============================================
-  // ANTI-AFK
-  // ============================================
   startAntiAfk() {
     this.clearTimer('afk');
     this.timers.set('afk', setInterval(() => {
       if (this.isMoving || this.isFollowing) return;
-      // Xoay nhẹ người để tránh bị kick AFK
       if (this.bot?.entity) {
         this.bot.look(this.bot.entity.yaw + 0.5, this.bot.entity.pitch, true);
       }
     }, CONFIG.ANTI_AFK_INTERVAL));
   }
 
-  // ============================================
-  // XỬ LÝ KẾT NỐI
-  // ============================================
   onKicked(reason) {
     this.log(`Bị kick: ${reason}`, 'error');
     this.cleanup();
@@ -548,9 +426,6 @@ class MinecraftBot {
     this.log(`Lỗi: ${err.message}`, 'error');
   }
 
-  // ============================================
-  // RECONNECT
-  // ============================================
   scheduleReconnect() {
     if (this.timers.has('reconnect')) return;
     this.log(`Thử kết nối lại sau ${CONFIG.RECONNECT_DELAY / 1000}s...`, 'warn');
@@ -561,9 +436,6 @@ class MinecraftBot {
     }, CONFIG.RECONNECT_DELAY));
   }
 
-  // ============================================
-  // DỌN DẸP
-  // ============================================
   cleanup() {
     this.stopAllMovement();
     this.clearTimer('afk');
@@ -582,9 +454,6 @@ class MinecraftBot {
     }
   }
 
-  // ============================================
-  // THOÁT SẠCH SẼ (SIGINT)
-  // ============================================
   gracefulShutdown() {
     this.log('Đang tắt bot...', 'info');
     this.cleanup();
@@ -599,6 +468,5 @@ class MinecraftBot {
 const botApp = new MinecraftBot();
 botApp.connect();
 
-// Xử lý tắt chương trình sạch sẽ
 process.on('SIGINT', () => botApp.gracefulShutdown());
 process.on('SIGTERM', () => botApp.gracefulShutdown());
