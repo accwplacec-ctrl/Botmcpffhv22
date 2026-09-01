@@ -1,12 +1,24 @@
 // ============================================
-// MINECRAFT BOT - FIX VEC3 & PHYSICS TICK
+// MINECRAFT BOT - FIX RENDER DEPLOY & CHUNK LOAD
 // ============================================
 
 import mineflayer from 'mineflayer';
 import pathfinderPkg from 'mineflayer-pathfinder';
 const { pathfinder, Movements, goals } = pathfinderPkg;
 import minecraftData from 'minecraft-data';
-import { Vec3 } from 'vec3'; // ⭐ FIX: Import Vec3
+import { Vec3 } from 'vec3';
+import http from 'http'; // ⭐ HTTP server giả cho Render
+
+// ============================================
+// ⭐ HTTP SERVER GIẢ - GIÚP RENDER KHÔNG STUCK
+// ============================================
+const PORT = process.env.PORT || 10000;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Minecraft Bot is running\n');
+}).listen(PORT, () => {
+  console.log(`[HTTP] Health check server on port ${PORT}`);
+});
 
 // ============================================
 // CẤU HÌNH
@@ -19,10 +31,11 @@ const CONFIG = {
   VERSION: '1.21.4',
   
   PATHFINDER_TIMEOUT: 15000,
-  STUCK_THRESHOLD: 8,
+  STUCK_THRESHOLD: 10,
   GOAL_RANGE: 2,
   RECONNECT_DELAY: 5000,
   ANTI_AFK_INTERVAL: 30000,
+  CHUNK_LOAD_WAIT: 3000,      // ⭐ Đợi chunk load (ms)
 };
 
 // ============================================
@@ -41,6 +54,7 @@ class MinecraftBot {
     this.lastPos = null;
     this.stuckCounter = 0;
     this.pendingGoal = null;
+    this.chunkLoadAttempts = 0; // ⭐ Đếm số lần thử load chunk
     this.stats = { connects: 0, commands: 0, pathsCompleted: 0, pathsFailed: 0 };
   }
 
@@ -58,6 +72,8 @@ class MinecraftBot {
       username: CONFIG.BOT_USERNAME,
       auth: CONFIG.AUTH,
       version: CONFIG.VERSION,
+      viewDistance: 'far',      // ⭐ Load chunk xa nhất có thể
+      chatLengthLimit: 256,
     });
     this.bot.loadPlugin(pathfinder);
     this.stats.connects++;
@@ -77,10 +93,20 @@ class MinecraftBot {
   }
 
   // ============================================
-  // SPAWN
+  // ⭐ SPAWN: ĐỢI CHUNK LOAD TRƯỚC KHI HOẠT ĐỘNG
   // ============================================
-  onSpawn() {
+  async onSpawn() {
     this.log(`Bot đã vào game!`, 'success');
+    
+    // ⭐ ĐỢI CHUNK LOAD: Đảm bảo bot nhìn thấy thế giới xung quanh
+    this.log('Đang load chunk xung quanh...');
+    try {
+      await this.bot.waitForChunksToLoad();
+    } catch (e) {
+      this.log('Không đợi được chunk, tiếp tục anyway', 'warn');
+    }
+    await this.sleep(CONFIG.CHUNK_LOAD_WAIT);
+    
     this.mcData = minecraftData(this.bot.version);
     this.configureMovements();
     
@@ -88,17 +114,13 @@ class MinecraftBot {
     this.bot.pathfinder.tickTimeout = 40;
     
     this.startAntiAfk();
-    this.startSmartJump(); // ⭐ Tự nhảy khi gặp block
+    this.startSmartJump();
     
-    // Đợi 3 giây rồi mới chat (tránh bị Aternos kick ngay khi spawn)
     setTimeout(() => {
       if (this.bot?.entity) this.bot.chat('🤖 Bot sẵn sàng! Gõ !bot help');
     }, 3000);
   }
 
-  // ============================================
-  // CẤU HÌNH MOVEMENTS
-  // ============================================
   configureMovements() {
     this.movements = new Movements(this.bot, this.mcData);
     
@@ -121,14 +143,13 @@ class MinecraftBot {
     });
     
     this.bot.pathfinder.setMovements(this.movements);
-    this.log('Movements OK (đào: BẬT, parkour: TẮT)', 'success');
+    this.log('Movements OK (viewDistance: far)', 'success');
   }
 
   // ============================================
-  // ⭐ FIX CHÍNH: TỰ NHẢY KHI GẶP BLOCK
+  // ⭐ TỰ NHẢY KHI GẶP BLOCK
   // ============================================
   startSmartJump() {
-    // ⭐ FIX: Đổi physicTick -> physicsTick
     this.bot.on('physicsTick', () => {
       if (!this.isMoving && !this.isFollowing) return;
       if (!this.bot?.entity?.onGround) return;
@@ -138,7 +159,6 @@ class MinecraftBot {
       const py = this.bot.entity.position.y + 1;
       const pz = this.bot.entity.position.z + Math.cos(yaw) * 1.3;
       
-      // ⭐ FIX: Dùng new Vec3() thay vì object thường
       const blockFront = this.bot.blockAt(new Vec3(px, py, pz));
       const blockFeet = this.bot.blockAt(new Vec3(px, py - 1, pz));
       
@@ -214,6 +234,7 @@ class MinecraftBot {
       return;
     }
     this.stopAllMovement();
+    this.chunkLoadAttempts = 0;
     this.log(`Đi tới ${x} ${y} ${z}`, 'path');
     
     const goal = new goals.GoalNear(x, y, z, CONFIG.GOAL_RANGE);
@@ -226,6 +247,7 @@ class MinecraftBot {
     if (!target) { this.bot.chat(`❌ Không thấy ${name}`); return; }
     
     this.stopAllMovement();
+    this.chunkLoadAttempts = 0;
     const pos = target.position;
     const goal = new goals.GoalNear(pos.x, pos.y, pos.z, 2);
     this.startPathfinding(goal, `🚶 Đang đến chỗ ${name}...`);
@@ -306,7 +328,7 @@ class MinecraftBot {
         this.log(`Bị kẹt ${this.stuckCounter}s`, 'warn');
         
         if (this.stuckCounter === 2) this.attemptUnstuck();
-        if (this.stuckCounter >= CONFIG.STUCK_THRESHOLD) {
+        else if (this.stuckCounter >= CONFIG.STUCK_THRESHOLD) {
           this.log('Kẹt quá lâu -> Hủy', 'error');
           this.stopAllMovement();
           this.stats.pathsFailed++;
@@ -314,16 +336,60 @@ class MinecraftBot {
         }
       } else {
         this.stuckCounter = 0;
+        this.chunkLoadAttempts = 0; // Reset khi đang di chuyển tốt
       }
       this.lastPos = cur.clone();
     }, 1000));
   }
 
-  attemptUnstuck() {
-    this.log('Thoát kẹt...', 'warn');
+  // ============================================
+  // ⭐ THOÁT KẸT + LOAD CHUNK XUNG QUANH
+  // ============================================
+  async attemptUnstuck() {
+    this.chunkLoadAttempts++;
+    this.log(`Thoát kẹt lần ${this.chunkLoadAttempts}...`, 'warn');
+    
+    // ⭐ CÁCH 1: Nhảy + đi tới
     this.bot.setControlState('jump', true);
     this.bot.setControlState('forward', true);
-    this.bot.look(this.bot.entity.yaw + (Math.random() - 0.5), this.bot.entity.pitch, true);
+    
+    // ⭐ CÁCH 2: Xoay nhìn xung quanh để server gửi thêm chunk
+    // Bot nhìn trái, phải, trên, dưới -> trigger server load chunk
+    const looks = [
+      { yaw: 0, pitch: 0 },
+      { yaw: Math.PI / 2, pitch: 0 },
+      { yaw: Math.PI, pitch: 0 },
+      { yaw: -Math.PI / 2, pitch: 0 },
+      { yaw: 0, pitch: -Math.PI / 4 }, // Nhìn lên
+      { yaw: 0, pitch: Math.PI / 4 },  // Nhìn xuống
+    ];
+    
+    for (const look of looks) {
+      this.bot.look(this.bot.entity.yaw + look.yaw, look.pitch, true);
+      await this.sleep(200);
+    }
+    
+    // ⭐ CÁCH 3: Nếu kẹt nhiều lần, thử đi lùi để load chunk phía sau rồi tính lại đường
+    if (this.chunkLoadAttempts >= 2) {
+      this.bot.setControlState('forward', false);
+      this.bot.setControlState('back', true);
+      await this.sleep(500);
+      this.bot.setControlState('back', false);
+      
+      // ⭐ CÁCH 4: Đợi chunk load lại rồi reset goal
+      this.log('Đợi chunk load lại...', 'warn');
+      try { await this.bot.waitForChunksToLoad(); } catch(e) {}
+      await this.sleep(1000);
+      
+      // Reset lại pathfinding với cùng goal để tính lại đường
+      if (this.pendingGoal && this.isMoving) {
+        this.log('Tính lại đường đi...', 'path');
+        this.bot.pathfinder.setGoal(null);
+        await this.sleep(500);
+        this.bot.pathfinder.setGoal(this.pendingGoal);
+        this.stuckCounter = 0;
+      }
+    }
     
     setTimeout(() => {
       this.bot.setControlState('jump', false);
@@ -331,11 +397,16 @@ class MinecraftBot {
     }, 600);
   }
 
+  sleep(ms) {
+    return new Promise(r => setTimeout(r, ms));
+  }
+
   onGoalReached() {
     if (!this.isMoving) return;
     this.stopAllMovement();
     this.stats.pathsCompleted++;
     this.pendingGoal = null;
+    this.chunkLoadAttempts = 0;
     this.bot.chat('✅ Đã đến nơi!');
   }
 
@@ -344,6 +415,7 @@ class MinecraftBot {
     this.stopAllMovement();
     this.stats.pathsFailed++;
     this.pendingGoal = null;
+    this.chunkLoadAttempts = 0;
     this.bot.chat('❌ Không tìm được đường!');
   }
 
@@ -358,6 +430,7 @@ class MinecraftBot {
     setTimeout(() => {
       this.configureMovements();
       this.pendingGoal = null;
+      this.chunkLoadAttempts = 0;
     }, 1000);
   }
 
@@ -385,13 +458,9 @@ class MinecraftBot {
     }, CONFIG.ANTI_AFK_INTERVAL));
   }
 
-  // ============================================
-  // ⭐ FIX: Xử lý kick reason object
-  // ============================================
   onKicked(reason) {
-    // Aternos có thể gửi reason dạng object, cần stringify
     const reasonStr = typeof reason === 'object' ? JSON.stringify(reason) : String(reason);
-    this.log(`Bị kick: ${reasonStr}`, 'error');
+    this.log(`Kick: ${reasonStr}`, 'error');
     this.cleanup();
     this.scheduleReconnect();
   }
